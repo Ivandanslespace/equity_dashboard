@@ -96,6 +96,8 @@ import xlwings as xw
 from matplotlib.patches import Patch
 from pandas.errors import SettingWithCopyWarning
 
+from data_schema import stabiliser_schema_data
+
 import re
 from pathlib import Path
 
@@ -3097,9 +3099,7 @@ class PortfolioDashboard:
             sedol_col = df.pop("Company SEDOL")
             df["Company SEDOL"] = sedol_col
 
-        # Ajout de l'univers complet sans déplacer les colonnes historiques
-        # de DATA, encore utilisées directement par certaines formules.
-        base_columns = list(df.columns)
+        # Ajout de l'univers complet avant application du contrat DATA.
         fund_positions = self.fund_full.copy()
         benchmark_positions = self.indice_full.copy()
         excluded_columns = {"%ACTIF", "%ACTIF 100%"}
@@ -3149,6 +3149,8 @@ class PortfolioDashboard:
                 df[column] = df[column].combine_first(df[position_column])
                 df.drop(columns=position_column, inplace=True)
 
+        df = stabiliser_schema_data(df)
+
         for column in [
             "Weight PTF brut", "Weight PTF",
             "Weight Bench brut", "Weight Bench",
@@ -3164,21 +3166,6 @@ class PortfolioDashboard:
         df["Company SEDOL"] = df["Company SEDOL"].fillna(
             df["ISIN"].map(isin_to_sedol)
         )
-
-        market_value = "Benchmark Market Value Millions in EUR"
-        market_value_spaced = f"{market_value} "
-        if market_value in df.columns:
-            if market_value_spaced in df.columns:
-                df[market_value_spaced] = df[market_value_spaced].fillna(
-                    df[market_value]
-                )
-                df.drop(columns=market_value, inplace=True)
-            else:
-                df.rename(columns={market_value: market_value_spaced}, inplace=True)
-
-        df = df[base_columns + [
-            column for column in df.columns if column not in base_columns
-        ]]
 
         self._clear_used(ws)
         # Écrit depuis A1 avec header
