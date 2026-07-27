@@ -1795,7 +1795,12 @@ class PortfolioDashboard:
 
     @staticmethod
     def _patch_add_nb_fonds_internes(df):
-        df_position = pd.read_pickle(r'\\groupe-ufg.com\commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_BASE\_BASE_PICKLE_HISTO\df_merged_position.pkl')
+        try:
+            df_position = pd.read_pickle(r'\\groupe-ufg.com\commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_BASE\_BASE_PICKLE_HISTO\df_merged_position.pkl')
+        except FileNotFoundError:
+            df['Nb de fonds maison détenant la pos'] = 0
+            return df
+
         df_position = df_position[(df_position['source']=='funds_CMAM_via_LT')|(df_position['source']=='funds_CMAM_via LT')|(df_position['source']=='funds_via_Base_ESG')]
         df['Nb de fonds maison détenant la pos'] = df['ISIN'].apply(lambda x: len(df_position.loc[df_position['ident'] == x, 'portfolioId'].unique()))    
         return df
