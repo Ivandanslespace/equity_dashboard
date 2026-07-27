@@ -387,7 +387,10 @@ class PortfolioDashboard:
                         f"dernier point retenu au {latest_date.strftime('%Y-%m-%d')}."
                     )
 
-            self.fund_name = "Portfolio"
+            if "PTF" in self.fund.columns and self.fund["PTF"].notna().any():
+                self.fund_name = str(self.fund["PTF"].dropna().iloc[0]).strip()
+            else:
+                self.fund_name = Path(path).stem
 
         elif c_type == "excel_ts":
             # Cas 2 : Excel séries temporelles (format analyse_histo)
