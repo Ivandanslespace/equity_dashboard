@@ -8,6 +8,7 @@ from lxml import etree
 from openpyxl import load_workbook
 
 from ooxml_writer import NS_MAIN, OoxmlWorkbook
+from proposition_formulas import write_proposition_formulas
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,12 @@ def test_ecriture_preserve_le_modele_et_force_le_recalcul(tmp_path):
     data.used_range.clear_contents()
     data.range("A1").options(index=False, header=True).value = pd.DataFrame(
         {"ISIN": ["TEST"], "Poids": [0.25]}
+    )
+    write_proposition_formulas(
+        workbook.sheets["Proposition"],
+        data_rows=2,
+        fund_rows=2,
+        benchmark_rows=2,
     )
     workbook.save(output)
 
@@ -42,4 +49,7 @@ def test_ecriture_preserve_le_modele_et_force_le_recalcul(tmp_path):
     assert book["Analyse"]["D1"].value == "Ellebore"
     assert book["DATA"]["A2"].value == "TEST"
     assert book["DATA"]["B2"].value == 0.25
+    assert book["Proposition"]["A6"].value.startswith("=IF(")
+    assert "'DATA'!" in book["Proposition"]["B6"].value
+    assert "_xlfn." not in book["Proposition"]["A6"].value
     book.close()

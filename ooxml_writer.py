@@ -503,6 +503,21 @@ class OoxmlRange:
         else:
             self.worksheet.write_cell(self.row, self.column, value)
 
+    @property
+    def formula(self) -> None:
+        return None
+
+    @formula.setter
+    def formula(self, value: Any) -> None:
+        if (
+            isinstance(value, (list, tuple))
+            and value
+            and isinstance(value[0], (list, tuple))
+        ):
+            self.worksheet.write_formula_matrix(self.row, self.column, value)
+        else:
+            self.worksheet.write_formula(self.row, self.column, value)
+
     def options(self, index: bool = False, header: bool = True) -> "OoxmlRange":
         self._include_index = index
         self._include_header = header
@@ -671,6 +686,30 @@ class OoxmlWorksheet:
             for column_offset, value in enumerate(values):
                 self.write_cell(row + row_offset, column + column_offset, value)
 
+    def write_formula(self, row: int, column: int, formula: Any) -> None:
+        cell = self._cell(row, column)
+        self._clear_cell(cell)
+        cell.attrib.pop("cm", None)
+        cell.attrib.pop("vm", None)
+        text = str(formula or "")
+        if text.startswith("="):
+            text = text[1:]
+        if text:
+            etree.SubElement(cell, _qname(NS_MAIN, "f")).text = text
+            etree.SubElement(cell, _qname(NS_MAIN, "v"))
+        self.dirty = True
+
+    def write_formula_matrix(
+        self, row: int, column: int, matrix: Iterable[Iterable[Any]]
+    ) -> None:
+        for row_offset, values in enumerate(matrix):
+            for column_offset, formula in enumerate(values):
+                self.write_formula(
+                    row + row_offset,
+                    column + column_offset,
+                    formula,
+                )
+
     def cell_value(self, row: int, column: int) -> Any:
         address = _cell_address(row, column)
         cell = self.root.find(
@@ -745,6 +784,20 @@ class OoxmlWorksheet:
                 customWidth="1",
                 bestFit="1",
             )
+        self.dirty = True
+
+    def hide_columns(self, start_column: int, end_column: int) -> None:
+        columns_node = self.root.find(_qname(NS_MAIN, "cols"))
+        if columns_node is None:
+            columns_node = etree.Element(_qname(NS_MAIN, "cols"))
+            self._sheet_data().addprevious(columns_node)
+        etree.SubElement(
+            columns_node,
+            _qname(NS_MAIN, "col"),
+            min=str(start_column),
+            max=str(end_column),
+            hidden="1",
+        )
         self.dirty = True
 
     def flush(self) -> None:
