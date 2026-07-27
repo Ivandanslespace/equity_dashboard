@@ -94,7 +94,6 @@ from openpyxl.styles import Alignment
 from openpyxl.drawing.image import Image as OpenpyxlImage
 
 from ooxml_writer import OoxmlWorkbook
-from proposition_formulas import write_proposition_formulas
 
 from matplotlib.patches import Patch
 from pandas.errors import SettingWithCopyWarning
@@ -168,11 +167,10 @@ class PortfolioDashboard:
         "Attribution MF":    ("Attribution MF",   "_export_attribution_mf"),   # BHB MF
         "Attribution OLS":   ("Attribution OLS",  "_export_attribution_ols"),  # OLS unifié strict
 
-        # Écriture des feuilles de données avant les formules de proposition.
+        # Écriture des feuilles de données.
         "Fonds":             ("Fonds",            "_export_fonds"),
         "Benchmark":         ("Benchmark",        "_export_benchmark"),
         "DATA":              ("DATA",             "_export_data"),
-        "Proposition":       ("Proposition",       "_export_proposition"),
     }
 
     # -------------------------------------------------------------------------
@@ -3008,18 +3006,6 @@ class PortfolioDashboard:
     # --------------------------
     # Équivalents des méthodes d'export
     # --------------------------
-    def _export_proposition(self, ws):
-        """Conserve des formules interactives compatibles avec Office 16."""
-        if not hasattr(self, "fund_full"):
-            self.build_fund_full()
-        if not hasattr(self, "screen_final"):
-            self.build_screen_final()
-
-        write_proposition_formulas(
-            ws,
-            data_rows=len(self.screen_final),
-        )
-
     def _export_data(self, ws):
         if not hasattr(self, "screen_final"):
             self.build_screen_final()
