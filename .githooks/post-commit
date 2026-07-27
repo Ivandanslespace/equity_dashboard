@@ -1,0 +1,3 @@
+#!/bin/sh
+branch="$(git branch --show-current)"
+[ -z "$branch" ] || git push origin "$branch"
