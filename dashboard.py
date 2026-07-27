@@ -3043,8 +3043,6 @@ class PortfolioDashboard:
         write_proposition_formulas(
             ws,
             data_rows=len(self.screen_final),
-            fund_rows=len(self.fund_full),
-            benchmark_rows=len(self.indice_full),
         )
 
     def _export_data(self, ws):
@@ -3099,6 +3097,16 @@ class PortfolioDashboard:
                         how = "left",
                         left_on = "ISIN",
                         right_on = "ISIN")
+
+        # Ajout du bêta dans DATA pour centraliser les formules de Proposition.
+        beta_source = pd.concat(
+            [
+                self.fund_full[["ISIN", "Beta"]],
+                self.indice_full[["ISIN", "Beta"]],
+            ],
+            ignore_index=True,
+        ).drop_duplicates("ISIN")
+        df["Beta"] = df["ISIN"].map(beta_source.set_index("ISIN")["Beta"])
 
         # Déplacer SEDOL en dernière colonne
         if "Company SEDOL" in df.columns:

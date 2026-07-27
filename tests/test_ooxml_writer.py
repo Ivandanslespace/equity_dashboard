@@ -28,8 +28,6 @@ def test_ecriture_preserve_le_modele_et_force_le_recalcul(tmp_path):
     write_proposition_formulas(
         workbook.sheets["Proposition"],
         data_rows=2,
-        fund_rows=2,
-        benchmark_rows=2,
     )
     workbook.save(output)
 

@@ -37,34 +37,6 @@ def _fixed_data_lookup_formula(
     )
 
 
-def _beta_formula(
-    row: int,
-    header_row: int,
-    fund_last_row: int,
-    benchmark_last_row: int,
-    benchmark_first: bool,
-) -> str:
-    header_cell = f"S${header_row}"
-    sources = [
-        ("Benchmark", "AS", benchmark_last_row),
-        ("Fonds", "AT", fund_last_row),
-    ]
-    if not benchmark_first:
-        sources.reverse()
-
-    lookups = []
-    for sheet, last_column, last_row in sources:
-        lookups.append(
-            f"INDEX('{sheet}'!$A$2:${last_column}${last_row},"
-            f"MATCH($A{row},'{sheet}'!$A$2:$A${last_row},0),"
-            f"MATCH({header_cell},'{sheet}'!$A$1:${last_column}$1,0))"
-        )
-    return (
-        f'=IF($A{row}="","",IFERROR({lookups[0]},'
-        f'IFERROR({lookups[1]},"")))'
-    )
-
-
 def _result_matrix(
     start_row: int,
     settings_row: int,
@@ -74,9 +46,6 @@ def _result_matrix(
     helper_isin_column: str,
     helper_last_row: int,
     data_last_row: int,
-    fund_last_row: int,
-    benchmark_last_row: int,
-    benchmark_first: bool,
 ) -> list[list[str]]:
     matrix = []
     top_n_cell = f"$B${settings_row}"
@@ -109,16 +78,7 @@ def _result_matrix(
         ]
         formulas.extend(
             _data_lookup_formula(row, header_row, column, data_last_row)
-            for column in range(8, 19)
-        )
-        formulas.append(
-            _beta_formula(
-                row,
-                header_row,
-                fund_last_row,
-                benchmark_last_row,
-                benchmark_first,
-            )
+            for column in range(8, 20)
         )
         matrix.append(formulas)
     return matrix
@@ -127,15 +87,11 @@ def _result_matrix(
 def write_proposition_formulas(
     worksheet,
     data_rows: int,
-    fund_rows: int,
-    benchmark_rows: int,
 ) -> None:
     """Réécrit les résultats avec des formules recalculables liées à DATA."""
     data_rows = max(1, data_rows)
     data_last_row = data_rows + 1
     helper_last_row = data_rows + 5
-    fund_last_row = max(2, fund_rows + 1)
-    benchmark_last_row = max(2, benchmark_rows + 1)
 
     helper_matrix = []
     for row in range(6, helper_last_row + 1):
@@ -188,9 +144,6 @@ def write_proposition_formulas(
         helper_isin_column="W",
         helper_last_row=helper_last_row,
         data_last_row=data_last_row,
-        fund_last_row=fund_last_row,
-        benchmark_last_row=benchmark_last_row,
-        benchmark_first=False,
     )
     benchmark_matrix = _result_matrix(
         start_row=43,
@@ -201,9 +154,6 @@ def write_proposition_formulas(
         helper_isin_column="Z",
         helper_last_row=helper_last_row,
         data_last_row=data_last_row,
-        fund_last_row=fund_last_row,
-        benchmark_last_row=benchmark_last_row,
-        benchmark_first=True,
     )
 
     worksheet.range("A6").resize(30, 19).formula = top_matrix
