@@ -61,8 +61,6 @@
 # ├── Export Excel
 # │   ├── export_to_excel() : Orchestrateur d'export vers le template
 # │   ├── _export_data() : Onglet [DATA]
-# │   ├── _export_fonds() : Onglet [Fonds]
-# │   ├── _export_benchmark() : Onglet [Benchmark]
 # │   ├── _export_analyse() : Onglet [Analyse]
 # │   ├── _export_newsflow() : Onglet [NewsFlow]
 # │   ├── _export_topworst() : Onglet [TopWorst Perf]
@@ -167,9 +165,7 @@ class PortfolioDashboard:
         "Attribution MF":    ("Attribution MF",   "_export_attribution_mf"),   # BHB MF
         "Attribution OLS":   ("Attribution OLS",  "_export_attribution_ols"),  # OLS unifié strict
 
-        # Écriture des feuilles de données.
-        "Fonds":             ("Fonds",            "_export_fonds"),
-        "Benchmark":         ("Benchmark",        "_export_benchmark"),
+        # DATA est l'unique feuille alimentée par Python.
         "DATA":              ("DATA",             "_export_data"),
     }
 
@@ -3032,6 +3028,8 @@ class PortfolioDashboard:
     # Équivalents des méthodes d'export
     # --------------------------
     def _export_data(self, ws):
+        if not hasattr(self, "fund_full"):
+            self.build_fund_full()
         if not hasattr(self, "screen_final"):
             self.build_screen_final()
 
@@ -3099,83 +3097,93 @@ class PortfolioDashboard:
             sedol_col = df.pop("Company SEDOL")
             df["Company SEDOL"] = sedol_col
 
+        # Ajout de l'univers complet sans déplacer les colonnes historiques
+        # de DATA, encore utilisées directement par certaines formules.
+        base_columns = list(df.columns)
+        fund_positions = self.fund_full.copy()
+        benchmark_positions = self.indice_full.copy()
+        excluded_columns = {"%ACTIF", "%ACTIF 100%"}
+        common_columns = list(dict.fromkeys(
+            ["ISIN"] + [
+                column
+                for frame in (fund_positions, benchmark_positions)
+                for column in frame.columns
+                if column not in excluded_columns and column != "ISIN"
+            ]
+        ))
+        position_common = pd.concat(
+            [
+                fund_positions.reindex(columns=common_columns),
+                benchmark_positions.reindex(columns=common_columns),
+            ],
+            ignore_index=True,
+        ).groupby("ISIN", as_index=False, sort=False).first()
+
+        fund_weights = fund_positions.groupby("ISIN", as_index=False)[
+            ["%ACTIF", "%ACTIF 100%"]
+        ].sum().rename(columns={
+            "%ACTIF": "Weight PTF brut",
+            "%ACTIF 100%": "Weight PTF",
+        })
+        benchmark_weights = benchmark_positions.groupby("ISIN", as_index=False)[
+            ["%ACTIF", "%ACTIF 100%"]
+        ].sum().rename(columns={
+            "%ACTIF": "Weight Bench brut",
+            "%ACTIF 100%": "Weight Bench",
+        })
+        position_master = position_common.merge(
+            fund_weights, on="ISIN", how="outer"
+        ).merge(
+            benchmark_weights, on="ISIN", how="outer"
+        )
+
+        df = df.merge(
+            position_master,
+            on="ISIN",
+            how="outer",
+            suffixes=("", "__position"),
+        )
+        for column in position_master.columns:
+            position_column = f"{column}__position"
+            if position_column in df.columns:
+                df[column] = df[column].combine_first(df[position_column])
+                df.drop(columns=position_column, inplace=True)
+
+        for column in [
+            "Weight PTF brut", "Weight PTF",
+            "Weight Bench brut", "Weight Bench",
+        ]:
+            df[column] = df[column].fillna(0.0)
+        df["Déviation Bench"] = df["Weight PTF"] - df["Weight Bench"]
+        df["Contrib Alpha"] = df["Contrib Alpha"].fillna(0.0)
+        df["Name"] = df["Name"].fillna(df["LIBELLE"])
+        df[" Benchmark ICB Supersector "] = df[
+            " Benchmark ICB Supersector "
+        ].fillna(df["ICB19 Supersector"])
+        df["Score ML"] = df["Score ML"].fillna(df["Score ML rebased"])
+        df["Company SEDOL"] = df["Company SEDOL"].fillna(
+            df["ISIN"].map(isin_to_sedol)
+        )
+
+        market_value = "Benchmark Market Value Millions in EUR"
+        market_value_spaced = f"{market_value} "
+        if market_value in df.columns:
+            if market_value_spaced in df.columns:
+                df[market_value_spaced] = df[market_value_spaced].fillna(
+                    df[market_value]
+                )
+                df.drop(columns=market_value, inplace=True)
+            else:
+                df.rename(columns={market_value: market_value_spaced}, inplace=True)
+
+        df = df[base_columns + [
+            column for column in df.columns if column not in base_columns
+        ]]
 
         self._clear_used(ws)
         # Écrit depuis A1 avec header
         self._write_df(ws, "A1", df, header=True, index=False)
         ws.autofit()
-
-    def _export_fonds(self, ws):
-        if not hasattr(self, "fund_full"):
-            self.build_fund_full()
-
-        df = self.fund_full.copy()
-
-        # Fusion du Contrib Alpha (OLS) si disponible
-        if hasattr(self, "ols_table4") and not self.ols_table4.empty:
-            alpha_map = self.ols_table4.set_index("ISIN")['Specific Contrib'].rename("Contrib Alpha")
-            df = df.merge(alpha_map, on="ISIN", how="left")
-
-        if "Contrib Alpha" not in df.columns:
-            df["Contrib Alpha"] = 0.0
-        else:
-            df["Contrib Alpha"] = df["Contrib Alpha"].fillna(0.0)
-
-        self._clear_used(ws)
-
-        cols_round = [
-            "Score Dividend","Score Value", "Score Quality","Score Momentum", "Score Volatility","Score Growth",
-            "Beta"
-        ]
-
-        for c in cols_round:
-            if c in df.columns:
-                df[c] = df[c].round(2)
-
-        # Add NEW/HOLD statut for excel bloom ptf
-        if "Statut PTF" in df.columns:
-            df = df[[c for c in df.columns if c != "Statut PTF"] + ["Statut PTF"]]
-
-
-        # Écriture en A1
-        self._write_df(ws, "A1", df, header=True, index=False)
-
-        # Format pour la colonne 16 (comme ton code) → 0.00%
-        # On repère A1, puis (row=2..n) pour ignorer l'entête si souhaité
-        nrows = df.shape[0] + 1  # +1 si header écrit
-        # Si tu veux appliquer aux données hors entête seulement:
-        # start_cell = ws.range("A1").offset(1, 15)  # ligne 2, colonne 16
-        start_cell = ws.range("A1").offset(0, 15)     # inclut l'entête si besoin
-        self._format_percent_col(ws, start_cell.get_address(), nrows)
-
-        # Centrer les lignes de données (hors entête)
-        data_range = ws.range("A2").expand()
-        try:
-            data_range.api.HorizontalAlignment = xw.constants.HAlign.xlHAlignCenter
-        except Exception:
-            pass
-
-        # ws.autofit()
-
-    def _export_benchmark(self, ws):
-        if not hasattr(self, "indice_full"):
-            self.build_fund_full()
-
-        df = self.indice_full.copy()
-
-        # Fusion du Contrib Alpha (OLS) si disponible
-        if hasattr(self, "ols_table4") and not self.ols_table4.empty:
-            alpha_map = self.ols_table4.set_index("ISIN")['Specific Contrib'].rename("Contrib Alpha")
-            df = df.merge(alpha_map, on="ISIN", how="left")
-    
-        if "Contrib Alpha" not in df.columns:
-            df["Contrib Alpha"] = 0.0
-        else:
-            df["Contrib Alpha"] = df["Contrib Alpha"].fillna(0.0)
-
-        self._clear_used(ws)
-        self._write_df(ws, "A1", df, header=True, index=False)
-        # ws.autofit()
 
     def _export_analyse(self, ws):
         if not hasattr(self, "fund_full"):
