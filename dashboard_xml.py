@@ -1876,6 +1876,18 @@ class PortfolioDashboard:
         fund_full   = fund_full.sort_values(by=["%ACTIF"], ascending=False)
         indice_full = indice_full.sort_values(by=["%ACTIF"], ascending=False)
 
+        # Conserver les positions qui pourront être réparties à l'export.
+        self._funds_to_expand = set(
+            fund_full.loc[
+                (pd.to_numeric(fund_full["%ACTIF"], errors="coerce").fillna(0) > 0)
+                & (
+                    fund_full["ICB19 Supersector"].isna()
+                    | fund_full["Exchange Country Region"].isna()
+                ),
+                "ISIN",
+            ].astype(str)
+        )
+
         # Nettoyer ETFs/ Fonds blended
         fund_full = self.netoyer_etf(fund_full)
 
@@ -1921,7 +1933,8 @@ class PortfolioDashboard:
                 (fund["ICB19 Supersector"].isna()) &
                 (fund["Exchange Country Region"].isna()) &
                 (fund["Exchange Country Name"].isna()) &
-                (~fund['ISIN'].isin(self.list_isin_etf))
+                (~fund['ISIN'].isin(self.list_isin_etf)) &
+                (~fund['ISIN'].astype(str).isin(getattr(self, "_funds_to_expand", set())))
                 )
         fund_filtered = fund[~mask]
 
@@ -1936,6 +1949,97 @@ class PortfolioDashboard:
             self.titres_ignored = pd.concat([self.titres_ignored, titres_ignored], ignore_index=True)
 
         return fund_filtered
+
+    def _expand_unclassified_fund_rows(self, df):
+        """Répartit les positions sans secteur/région selon la structure du benchmark."""
+        if df.empty or not hasattr(self, "indice_full"):
+            return df
+
+        bench = self.indice_full.copy()
+        isin = bench["ISIN"].astype(str).str.upper()
+        cash = isin.eq("CASH") | isin.str.contains("CASH", na=False)
+        cash |= bench.get("ICB19 Supersector", pd.Series(index=bench.index)).astype(str).str.casefold().eq("liquidités")
+        cash |= bench.get("Exchange Country Region", pd.Series(index=bench.index)).astype(str).str.casefold().eq("liquidités")
+        bench = bench.loc[~cash].copy()
+        bench["_poids"] = pd.to_numeric(bench["%ACTIF 100%"], errors="coerce").fillna(0.0)
+        bench = bench.loc[bench["_poids"] > 0]
+
+        def _distribution(columns):
+            valid = bench.dropna(subset=list(columns))
+            if valid.empty:
+                return pd.Series(dtype=float)
+            result = valid.groupby(list(columns), dropna=False)["_poids"].sum()
+            total = result.sum()
+            return result / total if total > 0 else pd.Series(dtype=float)
+
+        sector_dist = _distribution(["ICB19 Supersector"])
+        region_dist = _distribution(["Exchange Country Region"])
+        joint_dist = _distribution(["Exchange Country Region", "ICB19 Supersector"])
+        if sector_dist.empty and region_dist.empty and joint_dist.empty:
+            return df
+
+        base_rows = []
+        synthetic_rows = []
+        expanded_isins = set()
+        def _missing(value):
+            return pd.isna(value) or (isinstance(value, str) and not value.strip())
+
+        for _, row in df.iterrows():
+            isin_value = str(row.get("ISIN", ""))
+            if isin_value.upper() == "CASH" or isin_value not in getattr(self, "_funds_to_expand", set()):
+                base_rows.append(row.to_dict())
+                continue
+
+            sector_missing = _missing(row.get("ICB19 Supersector"))
+            region_missing = _missing(row.get("Exchange Country Region"))
+            if not sector_missing and not region_missing:
+                base_rows.append(row.to_dict())
+                continue
+
+            if sector_missing and region_missing:
+                distribution = joint_dist
+                if distribution.empty and not region_dist.empty and not sector_dist.empty:
+                    pairs = [(region, sector) for region in region_dist.index for sector in sector_dist.index]
+                    distribution = pd.Series(
+                        [region_dist[region] * sector_dist[sector] for region, sector in pairs],
+                        index=pd.MultiIndex.from_tuples(pairs),
+                    )
+                    distribution = distribution / distribution.sum()
+            elif sector_missing:
+                distribution = sector_dist
+            else:
+                distribution = region_dist
+            if distribution.empty:
+                base_rows.append(row.to_dict())
+                continue
+
+            def _number(value):
+                value = pd.to_numeric(value, errors="coerce")
+                return 0.0 if pd.isna(value) else float(value)
+
+            base_weight = _number(row.get("Weight PTF"))
+            base_weight_brut = _number(row.get("Weight PTF brut"))
+            base_bench = _number(row.get("Weight Bench"))
+            base_bench_brut = _number(row.get("Weight Bench brut"))
+            for position, share in distribution.items():
+                new_row = row.to_dict()
+                if isinstance(position, tuple):
+                    new_row["Exchange Country Region"], new_row["ICB19 Supersector"] = position
+                elif sector_missing:
+                    new_row["ICB19 Supersector"] = position
+                else:
+                    new_row["Exchange Country Region"] = position
+                new_row["Weight PTF"] = base_weight * float(share)
+                new_row["Weight PTF brut"] = base_weight_brut * float(share)
+                new_row["Weight Bench"] = base_bench if isin_value not in expanded_isins else 0.0
+                new_row["Weight Bench brut"] = base_bench_brut if isin_value not in expanded_isins else 0.0
+                new_row["Déviation Bench"] = new_row["Weight PTF"] - new_row["Weight Bench"]
+                synthetic_rows.append(new_row)
+            expanded_isins.add(isin_value)
+
+        expanded = pd.DataFrame(base_rows + synthetic_rows, columns=df.columns)
+        self.synthetic_fund_rows = int(len(expanded) - len(df))
+        return expanded
 
     @staticmethod
     def _patch_add_nb_fonds_internes(df):
@@ -3272,7 +3376,6 @@ class PortfolioDashboard:
             raise RuntimeError(
                 "Le contrat DATA doit contenir exactement les 160 colonnes du schema."
             )
-        self.data_table = df.copy()
 
         for column in [
             "Weight PTF brut", "Weight PTF",
@@ -3289,6 +3392,11 @@ class PortfolioDashboard:
         df["Company SEDOL"] = df["Company SEDOL"].fillna(
             df["ISIN"].map(isin_to_sedol)
         )
+
+        # Les lignes synthétiques sont ajoutées en dernier pour préserver l'ordre des titres.
+        df = self._expand_unclassified_fund_rows(df)
+        df = stabiliser_schema_data(df)
+        self.data_table = df.copy()
 
         self._clear_used(ws)
         # Écrit depuis A1 avec header
