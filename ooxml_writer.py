@@ -549,6 +549,11 @@ class OoxmlWorksheet:
         self.part = part
         self.root = etree.fromstring(workbook._parts[part])
         self.dirty = False
+        # Index en mémoire pour éviter une recherche XML linéaire à chaque cellule.
+        self._row_cache: dict[int, etree._Element] = {}
+        self._row_cell_cache: dict[int, dict[int, etree._Element]] = {}
+        self._row_max_column: dict[int, int] = {}
+        self._cell_cache: dict[tuple[int, int], etree._Element] = {}
         self._picture_anchor: tuple[int, int] | None = None
         self.pictures = _Pictures(self)
 
@@ -575,6 +580,9 @@ class OoxmlWorksheet:
         return sheet_data
 
     def _row(self, row_number: int) -> etree._Element:
+        cached = self._row_cache.get(row_number)
+        if cached is not None:
+            return cached
         sheet_data = self._sheet_data()
         row = sheet_data.find(
             f"{_qname(NS_MAIN, 'row')}[@r='{row_number}']"
@@ -587,21 +595,40 @@ class OoxmlWorksheet:
                     break
             else:
                 sheet_data.append(row)
+        self._row_cache[row_number] = row
         return row
 
     def _cell(self, row_number: int, column_number: int) -> etree._Element:
+        cached = self._cell_cache.get((row_number, column_number))
+        if cached is not None:
+            return cached
         row = self._row(row_number)
-        address = _cell_address(row_number, column_number)
-        cell = row.find(f"{_qname(NS_MAIN, 'c')}[@r='{address}']")
+        cell_map = self._row_cell_cache.get(row_number)
+        if cell_map is None:
+            cell_map = {
+                _parse_address(current.get("r"))[1]: current
+                for current in row
+                if current.tag == _qname(NS_MAIN, "c")
+            }
+            self._row_cell_cache[row_number] = cell_map
+            self._row_max_column[row_number] = max(cell_map, default=0)
+        cell = cell_map.get(column_number)
         if cell is None:
+            address = _cell_address(row_number, column_number)
             cell = etree.Element(_qname(NS_MAIN, "c"), r=address)
-            for current in row:
-                current_column = _parse_address(current.get("r"))[1]
-                if current_column > column_number:
-                    current.addprevious(cell)
-                    break
-            else:
+            if column_number >= self._row_max_column[row_number]:
                 row.append(cell)
+            else:
+                for current in row:
+                    current_column = _parse_address(current.get("r"))[1]
+                    if current_column > column_number:
+                        current.addprevious(cell)
+                        break
+            cell_map[column_number] = cell
+            self._row_max_column[row_number] = max(
+                self._row_max_column[row_number], column_number
+            )
+        self._cell_cache[(row_number, column_number)] = cell
         return cell
 
     @staticmethod
