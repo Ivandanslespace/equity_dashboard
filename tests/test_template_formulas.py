@@ -102,6 +102,7 @@ def test_analyse_compte_uniquement_les_titres_non_vides():
         }
 
     assert all('COUNTIF(' in formule and '"<>"' in formule for formule in formules.values())
+    assert 'INDIRECT($D$3&"!$A$2:$A$3000")' in formules["D6"]
     assert not any("COUNTA(" in formule for formule in formules.values())
 
 
@@ -122,3 +123,15 @@ def test_analyse_contient_la_table_de_sensibilite_te():
     assert valeur("V2") == "Poids PTF manquant / retiré"
     assert valeur("W2") == "Poids Bench manquant / retiré"
     assert valeur("P10") == "EWMA lambda 0,97"
+
+
+def test_analyse_ne_contient_pas_de_colonnes_dupliquees():
+    """Les définitions de largeur P:X doivent rester uniques dans le modèle."""
+    with zipfile.ZipFile(TEMPLATE) as archive:
+        parties = _parties_feuilles(archive)
+        root = etree.fromstring(archive.read(parties["Analyse"]))
+        colonnes = root.xpath(
+            './/*[local-name()="cols"]/*[local-name()="col"]'
+        )
+    plages = [(int(col.get("min")), int(col.get("max"))) for col in colonnes]
+    assert len(plages) == len(set(plages))
