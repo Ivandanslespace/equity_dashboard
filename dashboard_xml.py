@@ -138,6 +138,10 @@ class PortfolioDashboard:
         'Score ML': 'Score ML'
     }
 
+    _REGION_ALIASES = {
+        "Pacific": "Others",
+    }
+
     _ATTRIB_FACTORS = [
         "Score Value",
         "Score Growth",
@@ -579,6 +583,11 @@ class PortfolioDashboard:
         )
         screen_agg.reset_index(inplace=True)
         screen_agg = screen_agg.rename(columns=self._DICT_FACTEURS)
+
+        if "Exchange Country Region" in screen_agg.columns:
+            screen_agg["Exchange Country Region"] = screen_agg[
+                "Exchange Country Region"
+            ].replace(self._REGION_ALIASES)
 
         if "Benchmark Market Value Millions in EUR " not in screen_agg.columns:
             screen_agg.rename(columns={"Benchmark Market Value Millions in EUR": "Benchmark Market Value Millions in EUR "}, inplace=True)
@@ -1896,6 +1905,9 @@ class PortfolioDashboard:
             df["EPS Growth FY1"]  = df["EPS Growth FY1"].clip(lower=-100, upper=1000)
             df["FCF Conversion"]  = df["FCF Conversion"].clip(lower=-100, upper=1000)
             df["EBITDAm FY1"] = df["EBITDAm FY1"].clip(lower=-1, upper=1)
+            df["Exchange Country Region"] = df[
+                "Exchange Country Region"
+            ].replace(self._REGION_ALIASES)
 
         fund_full   = fund_full.sort_values(by=["%ACTIF"], ascending=False)
         indice_full = indice_full.sort_values(by=["%ACTIF"], ascending=False)
