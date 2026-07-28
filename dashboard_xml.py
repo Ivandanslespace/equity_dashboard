@@ -208,6 +208,7 @@ class PortfolioDashboard:
 
         self.bench_has_cash = False
         self.returns_cash = None
+        self.analysis_as_of_date = None
 
         # TITRES IGNORES
         self.titres_ignored = pd.DataFrame(columns=['ISIN', 'Name', 'Weight'])
@@ -466,6 +467,7 @@ class PortfolioDashboard:
                 raise ValueError("Aucune date commune entre le Portfolio TS et le Benchmark TS.")
 
             latest_date = pd.to_datetime(common_dates[-1])
+            self.analysis_as_of_date = latest_date
             print(f"   → Date de snapshot retenue pour l'analyse : {latest_date.strftime('%Y-%m-%d')}")
 
             # Extraction du snapshot courant (fin de période)
@@ -488,23 +490,63 @@ class PortfolioDashboard:
             self.attrib_end   = latest_date
 
         else:
-            if self.fund is not None:
-                if "LIBELLE" not in self.fund.columns: self.fund["LIBELLE"] = "N/A"
+            if self.fund is not None and "LIBELLE" not in self.fund.columns:
+                self.fund["LIBELLE"] = "N/A"
+            bench_snapshot = getattr(self, "bench_df", None)
+            if bench_snapshot is not None and "LIBELLE" not in bench_snapshot.columns:
+                bench_snapshot["LIBELLE"] = "N/A"
+                self.bench_df = bench_snapshot
 
-            # Si un des deux n'est pas TS, on extrait le max date de celui qui l'est
-            if self.fund_ts is not None:
-                latest_date = self.fund_ts["Date"].max()
-                self.fund = self.fund_ts[self.fund_ts["Date"] == latest_date].copy()
-                if "LIBELLE" not in self.fund.columns: self.fund["LIBELLE"] = "N/A"
+            def _date_max(frame):
+                if frame is None or "Date" not in frame.columns:
+                    return None
+                dates = pd.to_datetime(frame["Date"], errors="coerce").dropna()
+                return dates.max() if not dates.empty else None
 
-            if self.bench_ts is not None:
-                latest_date = self.bench_ts["Date"].max()
-                self.bench_df = self.bench_ts[self.bench_ts["Date"] == latest_date].copy()
-                if "LIBELLE" not in self.bench_df.columns: self.bench_df["LIBELLE"] = "N/A"
+            def _snapshot_at_or_before(frame, target):
+                if frame is None or "Date" not in frame.columns:
+                    return frame
+                dates = pd.to_datetime(frame["Date"], errors="coerce")
+                available = dates.dropna()
+                if available.empty:
+                    return frame
+                eligible = available[available <= target]
+                chosen = eligible.max() if not eligible.empty else available.min()
+                return frame.loc[dates == chosen].copy()
 
+            candidates = [
+                date
+                for date in (
+                    _date_max(self.fund),
+                    _date_max(self.fund_ts),
+                    _date_max(getattr(self, "bench_df", None)),
+                    _date_max(self.bench_ts),
+                )
+                if date is not None
+            ]
+            self.analysis_as_of_date = min(candidates) if candidates else None
 
+            # Les sources hétérogènes sont ramenées à la même date de référence.
+            if self.analysis_as_of_date is not None:
+                if self.fund_ts is not None:
+                    self.fund = _snapshot_at_or_before(
+                        self.fund_ts, self.analysis_as_of_date
+                    )
+                elif self.fund is not None:
+                    self.fund = _snapshot_at_or_before(
+                        self.fund, self.analysis_as_of_date
+                    )
 
-            # Snapshots de début non disponibles en mode snapshot statique
+                if self.bench_ts is not None:
+                    self.bench_df = _snapshot_at_or_before(
+                        self.bench_ts, self.analysis_as_of_date
+                    )
+                elif getattr(self, "bench_df", None) is not None:
+                    self.bench_df = _snapshot_at_or_before(
+                        self.bench_df, self.analysis_as_of_date
+                    )
+
+            # Snapshots de début non disponibles en mode snapshot statique.
             self.fund_start   = None
             self.bench_start  = None
             self.attrib_start = None
@@ -575,7 +617,7 @@ class PortfolioDashboard:
             names=["Date", "CASH"]
         )
         cash["Date"] = pd.to_datetime(cash["Date"], errors="coerce")
-        cash["CASH"] = pd.to_numeric(cash["CASH"], errors="coerce").fillna(0.0) / 100
+        cash["CASH"] = pd.to_numeric(cash["CASH"], errors="coerce") / 100
         self.returns_cash = (
             cash.dropna(subset=["Date"])
             .set_index("Date")
@@ -588,16 +630,27 @@ class PortfolioDashboard:
             print("⏳ Chargement des rendements (returns_2Y.parquet)...")
             df = pd.read_parquet(self.paths["returns"])
             df.index = pd.to_datetime(df.index, errors="coerce")
-            df = df.sort_index()
+            df = df.loc[df.index.notna()]
+            df = df.loc[~df.index.duplicated(keep="last")].sort_index()
 
             if self.returns_etf is not None:
                 etf = self.returns_etf.copy()
-                etf = etf.reindex(df.index).fillna(0.0)
+                etf.index = pd.to_datetime(etf.index, errors="coerce")
+                etf = etf.loc[etf.index.notna()]
+                etf = etf.loc[~etf.index.duplicated(keep="last")].sort_index()
+                etf = etf.reindex(df.index)
                 for c in etf.columns:
-                    df[c] = etf[c]
+                    if c in df.columns:
+                        df[c] = df[c].combine_first(etf[c])
+                    else:
+                        df[c] = etf[c]
 
             if self.returns_cash is not None:
-                cash = self.returns_cash.reindex(df.index).fillna(0.0)
+                cash = self.returns_cash.copy()
+                cash.index = pd.to_datetime(cash.index, errors="coerce")
+                cash = cash.loc[cash.index.notna()]
+                cash = cash.loc[~cash.index.duplicated(keep="last")].sort_index()
+                cash = cash.reindex(df.index)
                 df["CASH"] = cash["CASH"]
 
             self._df_returns = df
@@ -666,18 +719,6 @@ class PortfolioDashboard:
         status["Statut PTF"] = np.where(status["ISIN"].isin(prev_isin), "HOLD", "NEW")
         self.fund_status = status
 
-
-    # -------------------------------------------------------------------------
-    # Lazy loading
-    # -------------------------------------------------------------------------
-    @property
-    def df_returns(self) -> pd.DataFrame:
-        if self._df_returns is None:
-            print("⏳ Chargement des rendements (returns_2Y.parquet)...")
-            self._df_returns = pd.read_parquet(self.paths["returns"])
-            self._df_returns.index = pd.to_datetime(self._df_returns.index)
-            print("✅ Rendements chargés.")
-        return self._df_returns
 
     @property
     def news_raw(self) -> pd.DataFrame:
@@ -1294,6 +1335,24 @@ class PortfolioDashboard:
         return pd.DataFrame(S, index=cols, columns=cols)
 
 
+    def _resolve_risk_as_of_date(self, as_of_date=None):
+        """Résout une date de risque sans utiliser de rendements futurs."""
+        if as_of_date is not None:
+            return pd.Timestamp(as_of_date).normalize()
+        configured = getattr(self, "analysis_as_of_date", None)
+        if configured is not None:
+            return pd.Timestamp(configured).normalize()
+        candidates = []
+        for frame in (getattr(self, "fund", None), getattr(self, "bench_df", None)):
+            if frame is not None and "Date" in frame.columns:
+                dates = pd.to_datetime(frame["Date"], errors="coerce").dropna()
+                if not dates.empty:
+                    candidates.append(dates.max())
+        if candidates:
+            return min(candidates).normalize()
+        return pd.Timestamp(self.df_returns.index.max()).normalize()
+
+
     def compute_risk_metrics(self, freq: int = 252,
                             col_isin: str = "ISIN",
                             col_sedol: str = "Company SEDOL",
@@ -1301,7 +1360,11 @@ class PortfolioDashboard:
                             col_weight_ptf: str = "%ACTIF 100%",
                             method_cov="classique",
                             cov_lambda=0.94,
-                            window: int = 252):
+                            window: int = 252,
+                            as_of_date=None,
+                            drop_etf=False,
+                            drop_missing=False,
+                            renormalize=False):
         """
         Calcule les métriques de risque : Beta, Tracking Error, Contrib TE,
         Vol portefeuille, Vol benchmark.
@@ -1312,27 +1375,27 @@ class PortfolioDashboard:
         - CASH : clé forcée à "CASH", uniquement si bench_has_cash=True
         """
 
+        if window <= 1:
+            raise ValueError("La fenêtre de risque doit contenir au moins deux jours.")
+        if method_cov == "ewma" and not 0 < cov_lambda < 1:
+            raise ValueError("Le lambda EWMA doit être compris entre 0 et 1.")
+
         returns = self.df_returns.copy()
         returns.index = pd.to_datetime(returns.index, errors="coerce")
-        returns = returns.sort_index()
+        returns = returns.loc[returns.index.notna()]
+        returns = returns.loc[~returns.index.duplicated(keep="last")].sort_index()
+        as_of = self._resolve_risk_as_of_date(as_of_date)
+        returns = returns.loc[returns.index <= as_of]
+        if returns.empty:
+            raise ValueError("Aucun rendement disponible avant la date de référence.")
 
-        if self.returns_etf is not None:
-            etf = self.returns_etf.copy()
-            etf.index = pd.to_datetime(etf.index, errors="coerce")
-            etf = etf.reindex(returns.index).fillna(0.0)
-            returns[etf.columns] = etf
-
-        if self.bench_has_cash and self.returns_cash is not None:
-            cash = self.returns_cash.copy()
-            cash.index = pd.to_datetime(cash.index, errors="coerce")
-            cash = cash.reindex(returns.index).fillna(0.0)
-
-            if "CASH" in cash.columns:
-                returns["CASH"] = cash["CASH"]
-            else:
-                returns["CASH"] = cash.iloc[:, 0]
-
-        valid_return_cols = set(returns.columns)
+        returns_win = returns.iloc[-window:].copy()
+        min_obs = max(20, int(window * 0.80))
+        coverage = pd.DataFrame({
+            "observations": returns_win.notna().sum(),
+            "valid": returns_win.notna().sum() >= min_obs,
+        })
+        valid_return_cols = set(coverage.index[coverage["valid"]])
         etf_isins = set(pd.Series(self.list_isin_etf).dropna().astype(str).str.strip().tolist())
 
         def _attach_return_key(df: pd.DataFrame) -> pd.DataFrame:
@@ -1399,6 +1462,17 @@ class PortfolioDashboard:
         bench[col_weight] = pd.to_numeric(bench[col_weight], errors="coerce").fillna(0.0)
         bench["Weight"] = bench[col_weight]
 
+        if drop_etf:
+            ptf = ptf[~ptf[col_isin].isin(etf_isins)].copy()
+            bench = bench[~bench[col_isin].isin(etf_isins)].copy()
+
+        missing_ptf = ptf[~ptf["RETURN_KEY"].isin(valid_return_cols)].copy()
+        missing_bench = bench[~bench["RETURN_KEY"].isin(valid_return_cols)].copy()
+        missing_etf = missing_ptf[missing_ptf[col_isin].isin(etf_isins)]
+        missing_ptf_weight = float(missing_ptf[col_weight_ptf].sum())
+        missing_bench_weight = float(missing_bench[col_weight].sum())
+        missing_etf_weight = float(missing_etf[col_weight_ptf].sum())
+
         ptf_w = ptf.rename(columns={col_weight_ptf: col_weight}).copy()
         ind_w = bench.copy()
 
@@ -1410,14 +1484,16 @@ class PortfolioDashboard:
         if ind_w.empty:
             raise ValueError("Aucun actif du benchmark n'a de série de rendements exploitable.")
 
-        ptf_w[col_weight] = ptf_w[col_weight] / ptf_w[col_weight].sum()
-        ind_w[col_weight] = ind_w[col_weight] / ind_w[col_weight].sum()
+        if renormalize:
+            ptf_w[col_weight] = ptf_w[col_weight] / ptf_w[col_weight].sum()
+            ind_w[col_weight] = ind_w[col_weight] / ind_w[col_weight].sum()
 
         # -------------------------
         # Rendement de marché benchmark
         # -------------------------
         market_weights = ind_w.groupby("RETURN_KEY", as_index=True)[col_weight].sum()
-        market_weights = market_weights / market_weights.sum()
+        if renormalize:
+            market_weights = market_weights / market_weights.sum()
 
         market_returns_agg = returns.loc[:, market_weights.index].dot(market_weights)
         market_returns_agg.name = "market_return"
@@ -1434,7 +1510,6 @@ class PortfolioDashboard:
         # Volatilité individuelle
         # -------------------------
         ptf_w["RETURN_KEY"] = ptf_w["RETURN_KEY"].combine_first(ptf_w[col_isin])
-        ptf_w[col_weight] = ptf_w[col_weight] / ptf_w[col_weight].sum()
 
         ptf_wo_na = ptf_w[ptf_w["RETURN_KEY"].notna()].copy()
 
@@ -1488,22 +1563,26 @@ class PortfolioDashboard:
         # -------------------------
         # Covariance matrices
         # -------------------------
-        returns_win = returns.iloc[-window:].copy()
-
         univ_keys = pd.Index(univ["RETURN_KEY"].dropna().unique())
         ptf_keys = pd.Index(ptf_wo_na["RETURN_KEY"].dropna().unique())
+        cov_input_univ = returns_win.loc[:, univ_keys].dropna(how="any")
+        cov_input_ptf = returns_win.loc[:, ptf_keys].dropna(how="any")
+        if len(cov_input_univ) < min_obs or len(cov_input_ptf) < min_obs:
+            raise ValueError(
+                f"Observations communes insuffisantes ({len(cov_input_univ)} / {min_obs})."
+            )
 
         if method_cov == "ewma":
             print("EWMA method is used for calculating Covariance")
             cov_univ = self.ewma_covariance(
-                returns_win.loc[:, univ_keys], lam=cov_lambda, demean=False
+                cov_input_univ, lam=cov_lambda, demean=False
             ) * freq
             cov_ptf = self.ewma_covariance(
-                returns_win.loc[:, ptf_keys], lam=cov_lambda, demean=False
+                cov_input_ptf, lam=cov_lambda, demean=False
             ) * freq
         else:
-            cov_univ = returns_win.loc[:, univ_keys].cov() * freq
-            cov_ptf = returns_win.loc[:, ptf_keys].cov() * freq
+            cov_univ = cov_input_univ.cov() * freq
+            cov_ptf = cov_input_ptf.cov() * freq
 
         for c in [cov_univ, cov_ptf]:
             c.drop(columns=c.columns[c.columns.duplicated()], inplace=True)
@@ -1542,8 +1621,32 @@ class PortfolioDashboard:
         self.vol_bench = vol_bench
         self.vol = vol
         self._bench_for_risk = bench
+        self.risk_as_of_date = as_of
+        self.risk_diagnostics = {
+            "as_of_date": as_of,
+            "window": int(window),
+            "method_cov": method_cov,
+            "cov_lambda": cov_lambda if method_cov == "ewma" else np.nan,
+            "missing_ptf_weight": missing_ptf_weight,
+            "missing_bench_weight": missing_bench_weight,
+            "missing_etf_weight": missing_etf_weight,
+            "n_assets": int(len(univ_keys)),
+            "status": (
+                "ETF supprimés — poids renormalisés" if drop_etf
+                else "Actifs sans rendement supprimés — poids renormalisés" if drop_missing
+                else "Données manquantes — TE partiel" if missing_ptf_weight or missing_bench_weight
+                else "OK"
+            ),
+        }
 
         print("✅ compute_risk_metrics() terminé.")
+        print(f"   → Date de référence : {as_of.date()}")
+        print(f"   → TE annualisé : {te:.4%}")
+        if missing_ptf_weight or missing_bench_weight:
+            print(
+                "   ⚠️ Poids sans rendement : "
+                f"PTF={missing_ptf_weight:.2%}, Bench={missing_bench_weight:.2%}."
+            )
         print("   Attributs stockés :")
         print("   → self.betas       (Beta par ISIN)")
         print("   → self.te          (Tracking Error scalaire)")
@@ -1551,6 +1654,52 @@ class PortfolioDashboard:
         print("   → self.vol_ptf     (Volatilité portefeuille)")
         print("   → self.vol_bench   (Volatilité benchmark)")
         print("   → self.vol         (Volatilité individuelle par ISIN)")
+        return self.risk_diagnostics
+
+
+    def compute_te_scenarios(self):
+        """Construit la table des scénarios TE affichée dans l'onglet Analyse."""
+        scenarios = [
+            ("Normal", {}),
+            ("Suppression ETF sans rendement", {"drop_missing": True, "renormalize": True}),
+            ("Suppression de tous les ETF", {"drop_etf": True, "drop_missing": True, "renormalize": True}),
+            ("Fenêtre 126 jours", {"window": 126}),
+            ("Fenêtre 504 jours", {"window": 504}),
+            ("EWMA lambda 0,90", {"method_cov": "ewma", "cov_lambda": 0.90}),
+            ("EWMA lambda 0,94", {"method_cov": "ewma", "cov_lambda": 0.94}),
+            ("EWMA lambda 0,97", {"method_cov": "ewma", "cov_lambda": 0.97}),
+        ]
+        rows = []
+        for name, kwargs in scenarios:
+            try:
+                self.compute_risk_metrics(**kwargs)
+                diagnostics = self.risk_diagnostics
+                rows.append({
+                    "Scénario": name,
+                    "Méthode": "EWMA" if diagnostics["method_cov"] == "ewma" else "Classique",
+                    "Fenêtre (j)": diagnostics["window"],
+                    "Lambda": diagnostics["cov_lambda"],
+                    "As-of": diagnostics["as_of_date"],
+                    "TE annualisé": self.te,
+                    "Poids PTF manquant / retiré": diagnostics["missing_ptf_weight"],
+                    "Poids Bench manquant / retiré": diagnostics["missing_bench_weight"],
+                    "Statut": diagnostics["status"],
+                })
+            except Exception as exc:
+                rows.append({
+                    "Scénario": name,
+                    "Méthode": "EWMA" if kwargs.get("method_cov") == "ewma" else "Classique",
+                    "Fenêtre (j)": kwargs.get("window", 252),
+                    "Lambda": kwargs.get("cov_lambda", np.nan),
+                    "As-of": self._resolve_risk_as_of_date(),
+                    "TE annualisé": np.nan,
+                    "Poids PTF manquant / retiré": np.nan,
+                    "Poids Bench manquant / retiré": np.nan,
+                    "Statut": f"Erreur: {exc}",
+                })
+        self.compute_risk_metrics()
+        self.te_scenarios = pd.DataFrame(rows)
+        return self.te_scenarios
 
 
     def build_fund_full(self):
@@ -3153,6 +3302,8 @@ class PortfolioDashboard:
         if not hasattr(self, "deviation_df"):
             self.get_stock_deviation()
 
+        te_scenarios = self.compute_te_scenarios()
+
         # Petites valeurs dans des cellules précises
         ws.range((1, 4)).value = getattr(self, "fund_name", None)
         ws.range((1, 6)).value = getattr(self, "bench_name", None)
@@ -3180,6 +3331,18 @@ class PortfolioDashboard:
 
         # titres_ignored -> L67
         self._write_df(ws, "L67", self.titres_ignored, header=False, index=False)
+
+        # Tableau de sensibilité TE -> P3
+        te_columns = [
+            "Scénario", "Méthode", "Fenêtre (j)", "Lambda", "As-of",
+            "TE annualisé", "Poids PTF manquant / retiré", "Poids Bench manquant / retiré", "Statut",
+        ]
+        self._write_df(ws, "P3", te_scenarios[te_columns], header=False, index=False)
+        n_te = len(te_scenarios)
+        self._format_percent_col(ws, "U3", n_te)
+        self._format_percent_col(ws, "V3", n_te)
+        self._format_percent_col(ws, "W3", n_te)
+        ws.range("S3").resize(n_te, 1).number_format = "0.00"
 
     def _export_newsflow(self, ws):
         if not hasattr(self, "news_flow"):
