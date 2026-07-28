@@ -205,7 +205,7 @@ class PortfolioDashboard:
         self.vl_image_path = None
         self.sentiment_image_path = None
 
-        # Only for excel bloom source
+        # Uniquement pour la source Excel Bloom.
         self.fund_prev = None
         self.fund_status = pd.DataFrame(columns=["ISIN", "Statut PTF"])
         self.fund_source_type = fund_config.get("type")
@@ -1170,21 +1170,21 @@ class PortfolioDashboard:
         isin_col: str = "ISIN",
         sedol_col: str = "SEDOL",
         col_weight: str = "weight",
-        return_full_active_universe: bool = True  # include off-benchmark
+        return_full_active_universe: bool = True  # inclure les titres hors benchmark
     ):
         """
-        Compute TE and Euler contributions per security.
-        Returns: te (float), contrib_df (DataFrame indexed by ISIN with 'contrib_te').
+        Calcule le TE et les contributions d'Euler par titre.
+        Retourne te (float) et contrib_df (DataFrame indexé par ISIN avec « contrib_te »).
 
-        Assumes 'cov' is keyed by sedol_col (index = columns = SEDOL).
+        Suppose que « cov » est indexée par sedol_col (index et colonnes = SEDOL).
         """
 
-        # 1) Build the union universe (portfolio ∪ benchmark) on a consistent key set.
+        # 1) Construire l'univers union (portefeuille ∪ benchmark) sur des clés cohérentes.
         cols_needed = [isin_col, sedol_col, col_weight]
         w_ptf_ = w_ptf[cols_needed].drop_duplicates(subset=[isin_col]).copy()
         w_bch_ = w_bench[cols_needed].drop_duplicates(subset=[isin_col]).copy()
 
-        # 2) Merge weights side-by-side on ISIN to avoid accidental row replication.
+        # 2) Fusionner les poids par ISIN pour éviter toute réplication accidentelle.
         uni = (w_ptf_[[isin_col, sedol_col, col_weight]]
             .rename(columns={col_weight: "w_ptf"}))
         uni = uni.merge(w_bch_[[isin_col, sedol_col, col_weight]]
@@ -1193,21 +1193,21 @@ class PortfolioDashboard:
         uni[["w_ptf","w_bench"]] = uni[["w_ptf","w_bench"]].fillna(0.0)
         uni["active"] = uni["w_ptf"] - uni["w_bench"]
 
-        # 3) Keep only names that exist in the covariance matrix (by SEDOL).
+        # 3) Conserver uniquement les titres présents dans la matrice de covariance (par SEDOL).
         in_cov = uni[sedol_col].isin(cov.index)
         uni = uni.loc[in_cov].copy()
 
-        # Optional: if you want the 'benchmark-only' universe, set return_full_active_universe=False
+        # Optionnel : pour limiter l'univers au benchmark, définir return_full_active_universe=False.
         if not return_full_active_universe:
-            # This reproduces your benchmark-left behavior (not recommended if you want off-benchmark names)
+            # Reproduit le comportement benchmark-left, sans les titres hors benchmark.
             uni = uni.loc[uni["w_bench"] != 0].copy()
 
-        # 4) Align with covariance
+        # 4) Aligner sur la covariance.
         uni = uni.set_index(sedol_col)
         Sigma = cov.loc[uni.index, uni.index].values
         a = uni["active"].to_numpy()
 
-        # 5) TE and Euler contributions
+        # 5) Calculer le TE et les contributions d'Euler.
         quad = float(a.T @ Sigma @ a)
         te = float(np.sqrt(max(quad, 0.0)))
 
@@ -1217,13 +1217,13 @@ class PortfolioDashboard:
             marg = Sigma @ a                # (Σ a)
             uni["contrib_te"] = (a * marg) / te
 
-        # 6) Return contributions by ISIN (group in case of accidental duplicates)
+        # 6) Retourner les contributions par ISIN (regroupement des doublons éventuels).
         contrib_df = (uni.reset_index()[[sedol_col, isin_col, "contrib_te"]]
                         .groupby(isin_col, as_index=True, sort=False)["contrib_te"]
                         .sum()
                         .to_frame())
 
-        # Sanity check (should be true up to tiny float error)
+        # Contrôle de cohérence (vrai à l'erreur numérique près).
         # assert np.isclose(contrib_df["contrib_te"].sum(), te, rtol=1e-10, atol=1e-12)
 
         return te, contrib_df
@@ -1270,9 +1270,9 @@ class PortfolioDashboard:
                             "SE0000190126"
                     ]
 
-            # Convert to list of (keep, drop) pairs in order
+            # Convertir la liste en paires (conserver, supprimer) dans l'ordre.
             if len(isin_pairs) % 2 != 0:
-                    raise ValueError("The ISIN list length must be even (pairs of 2).")
+                    raise ValueError("La liste d'ISIN doit contenir un nombre pair d'éléments.")
 
             pairs = list(zip(isin_pairs[::2], isin_pairs[1::2]))
 
@@ -1281,7 +1281,7 @@ class PortfolioDashboard:
                                         weight_col='Weight in MSCI WORLD',
                                         drop_second=True): 
                 
-                # Ensure the weight column is numeric (coerce errors to NaN)
+                # Garantir que la colonne de poids est numérique (erreurs converties en NaN).
                 if weight_col not in df.columns:
                     raise KeyError(f"Column '{weight_col}' not found in DataFrame.")
                 
@@ -1304,7 +1304,7 @@ class PortfolioDashboard:
                                 df.at[keep, esg_col] = score_drop
 
                         if drop_second:
-                            # errors='ignore' avoids exceptions if it was dropped elsewhere
+                            # errors='ignore' évite une exception si la ligne a déjà été supprimée.
                             df.drop(index=drop, inplace=True, errors='ignore')
                 return df
 
@@ -1312,7 +1312,7 @@ class PortfolioDashboard:
                             df=df,
                             pairs=pairs,
                             weight_col= "%ACTIF",
-                            drop_second=True    # drop the second ISIN after merging
+                            drop_second=True    # supprimer le second ISIN après fusion
                             )
             return df
 
@@ -1322,26 +1322,26 @@ class PortfolioDashboard:
                         demean: bool = False,
                         init: str = "sample") -> pd.DataFrame:
         """
-        RiskMetrics-style multivariate EWMA covariance:
-        S_t = λ S_{t-1} + (1-λ) x_t x_t^T  (with optional de-meaning)
-       
-        Parameters
+        Calcule une covariance EWMA multivariée de type RiskMetrics :
+        S_t = λ S_{t-1} + (1-λ) x_t x_t^T (avec centrage facultatif).
+
+        Paramètres
         ----------
         returns_df : pd.DataFrame
-            T×N returns, index = dates, columns = securities (your SEDOLs).
-            Make sure columns are unique and aligned with your weights.
+            Rendements T×N, indexés par date et colonnes = titres (SEDOL).
+            Les colonnes doivent être uniques et alignées sur les poids.
         lam : float
-            Decay factor λ in (0,1). Higher λ = longer memory (slower reaction).
+            Facteur de décroissance λ dans (0,1). Un λ élevé implique une mémoire plus longue.
         demean : bool
-            If True, subtract global sample mean from each column before recursion.
-            Often set to False at daily frequency.
+            Si vrai, soustrait la moyenne empirique de chaque colonne avant la récursion.
+            Généralement faux pour les rendements quotidiens.
         init : {"sample","zero"}
-            Initialization for S_0.
-       
-        Returns
-        -------
+            Initialisation de S_0.
+
+        Retour
+        ------
         Sigma : pd.DataFrame (N×N)
-            EWMA covariance (per-period units, NOT annualized).
+            Covariance EWMA par période, non annualisée.
         """
         R = returns_df.copy()
         R = R.dropna(how="any")
@@ -2378,7 +2378,7 @@ class PortfolioDashboard:
     #      • Une seule régression OLS inclut simultanément les dummies Secteur,
     #        les dummies Région et les scores factoriels.
     #      • Les quatre tables sont orthogonales par construction (propriété OLS).
-    #      • Table1 + Table2 + Table3 + Table4 = Total Active Return exact.
+    #      • Table 1 + Table 2 + Table 3 + Table 4 = rendement actif total exact.
     #
     # =========================================================================
 
@@ -3111,8 +3111,8 @@ class PortfolioDashboard:
         # summary_rows = [
         #     {"Composante": "Sector BHB",  "Valeur": self.attrib_total.get("Sector BHB (indicatif)", "")},
         #     {"Composante": "Region BHB",  "Valeur": self.attrib_total.get("Region BHB (indicatif)", "")},
-        #     {"Composante": "Factor Ret",  "Valeur": self.attrib_total.get("Factor Return", "")},
-        #     {"Composante": "Specific",    "Valeur": self.attrib_total.get("Specific Return", "")},
+    #     {"Composante": "Rendement factoriel", "Valeur": self.attrib_total.get("Factor Return", "")},
+    #     {"Composante": "Spécifique",          "Valeur": self.attrib_total.get("Specific Return", "")},
         # ]
         # self._write_df(ws, "A124", pd.DataFrame(summary_rows), header=True, index=False)
         # ws.autofit()
