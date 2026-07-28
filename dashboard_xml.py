@@ -555,7 +555,28 @@ class PortfolioDashboard:
 
     def _load_core_data(self):
         """Charge les données de base (Screen, CIQ, Transco) disponibles rapidement."""
-        screen_agg = pd.read_parquet(self.paths["ciq"])
+        screen_path = self.paths["ciq"]
+
+        # Le screen historique est volumineux : seules les deux dernières dates
+        # sont nécessaires pour le snapshot courant, le delta et les quintiles.
+        screen_dates = pd.read_parquet(screen_path, columns=["Date"])["Date"]
+        screen_dates = (
+            pd.to_datetime(screen_dates, errors="coerce")
+            .dropna()
+            .drop_duplicates()
+            .sort_values()
+        )
+        if screen_dates.empty:
+            raise ValueError("Le fichier screen ne contient aucune date exploitable.")
+        recent_dates = screen_dates.iloc[-2:].tolist()
+        screen_agg = pd.read_parquet(
+            screen_path,
+            filters=[("Date", "in", recent_dates)],
+        )
+        print(
+            "   → Screen filtré aux dates récentes : "
+            + ", ".join(pd.Timestamp(date).strftime("%Y-%m-%d") for date in recent_dates)
+        )
         screen_agg.reset_index(inplace=True)
         screen_agg = screen_agg.rename(columns=self._DICT_FACTEURS)
 
@@ -578,8 +599,11 @@ class PortfolioDashboard:
 
 
         self.screen_agg   = screen_agg.copy(deep=True)
-        self.spot_date    = screen_agg["Date"].unique()[-1]
-        self.last_date    = screen_agg["Date"].unique()[-2]
+        available_dates = pd.DatetimeIndex(
+            pd.to_datetime(screen_agg["Date"].unique())
+        ).sort_values()
+        self.spot_date = available_dates[-1]
+        self.last_date = available_dates[-2] if len(available_dates) > 1 else available_dates[-1]
 
         try:
             self.df_reco_facto = pd.read_excel(
