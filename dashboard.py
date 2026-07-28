@@ -96,7 +96,7 @@ import xlwings as xw
 from matplotlib.patches import Patch
 from pandas.errors import SettingWithCopyWarning
 
-from data_schema import stabiliser_schema_data
+from data_schema import DATA_SCHEMA, stabiliser_schema_data
 
 import re
 from pathlib import Path
@@ -3293,6 +3293,11 @@ class PortfolioDashboard:
                 df.drop(columns=position_column, inplace=True)
 
         df = stabiliser_schema_data(df)
+        if tuple(df.columns) != DATA_SCHEMA:
+            raise RuntimeError(
+                "Le contrat DATA doit contenir exactement les 160 colonnes du schema."
+            )
+        self.data_table = df.copy()
 
         for column in [
             "Weight PTF brut", "Weight PTF",

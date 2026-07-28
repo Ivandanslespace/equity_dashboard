@@ -8,6 +8,7 @@ from data_schema import DATA_SCHEMA, stabiliser_schema_data
 
 def test_schema_data_complete_les_colonnes_optionnelles_et_fixe_l_ordre():
     """Un snapshot incomplet ne doit jamais déplacer les colonnes DATA."""
+    assert len(DATA_SCHEMA) == 160
     source = pd.DataFrame({"ISIN": ["TEST"], "Beta": [1.1]})
 
     resultat = stabiliser_schema_data(source)
