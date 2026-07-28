@@ -1681,9 +1681,6 @@ class PortfolioDashboard:
                     "Lambda": diagnostics["cov_lambda"],
                     "As-of": diagnostics["as_of_date"],
                     "TE annualisé": self.te,
-                    "Poids PTF manquant / retiré": diagnostics["missing_ptf_weight"],
-                    "Poids Bench manquant / retiré": diagnostics["missing_bench_weight"],
-                    "Statut": diagnostics["status"],
                 })
             except Exception as exc:
                 rows.append({
@@ -1693,9 +1690,6 @@ class PortfolioDashboard:
                     "Lambda": kwargs.get("cov_lambda", np.nan),
                     "As-of": self._resolve_risk_as_of_date(),
                     "TE annualisé": np.nan,
-                    "Poids PTF manquant / retiré": np.nan,
-                    "Poids Bench manquant / retiré": np.nan,
-                    "Statut": f"Erreur: {exc}",
                 })
         self.compute_risk_metrics()
         self.te_scenarios = pd.DataFrame(rows)
@@ -3360,13 +3354,11 @@ class PortfolioDashboard:
         # Tableau de sensibilité TE -> P3
         te_columns = [
             "Scénario", "Méthode", "Fenêtre (j)", "Lambda", "As-of",
-            "TE annualisé", "Poids PTF manquant / retiré", "Poids Bench manquant / retiré", "Statut",
+            "TE annualisé",
         ]
         self._write_df(ws, "P3", te_scenarios[te_columns], header=False, index=False)
         n_te = len(te_scenarios)
         self._format_percent_col(ws, "U3", n_te)
-        self._format_percent_col(ws, "V3", n_te)
-        self._format_percent_col(ws, "W3", n_te)
         ws.range("S3").resize(n_te, 1).number_format = "0.00"
 
     def _export_newsflow(self, ws):

@@ -101,7 +101,7 @@ def test_analyse_compte_uniquement_les_titres_non_vides():
             for adresse in ("C6", "D6")
         }
 
-    assert all('COUNTIF(' in formule and '"<>"' in formule for formule in formules.values())
+    assert all('SUMPRODUCT(--(' in formule and '<>""' in formule for formule in formules.values())
     assert 'INDIRECT($D$3&"!$A$2:$A$3000")' in formules["D6"]
     assert not any("COUNTA(" in formule for formule in formules.values())
 
@@ -114,19 +114,22 @@ def test_analyse_contient_la_table_de_sensibilite_te():
 
         def valeur(adresse):
             cellule = root.find(f".//{{{NS_MAIN}}}c[@r='{adresse}']")
+            if cellule is None:
+                return None
             inline = cellule.find(f"{{{NS_MAIN}}}is/{{{NS_MAIN}}}t")
             return inline.text if inline is not None else None
 
     assert valeur("P1") == "Sensibilité Tracking Error"
     assert valeur("P2") == "Scénario"
     assert valeur("U2") == "TE annualisé"
-    assert valeur("V2") == "Poids PTF manquant / retiré"
-    assert valeur("W2") == "Poids Bench manquant / retiré"
+    assert valeur("V2") is None
+    assert valeur("W2") is None
+    assert valeur("X2") is None
     assert valeur("P10") == "EWMA lambda 0,97"
 
 
 def test_analyse_ne_contient_pas_de_colonnes_dupliquees():
-    """Les définitions de largeur P:X doivent rester uniques dans le modèle."""
+    """Les définitions de largeur de la table TE doivent rester uniques."""
     with zipfile.ZipFile(TEMPLATE) as archive:
         parties = _parties_feuilles(archive)
         root = etree.fromstring(archive.read(parties["Analyse"]))
