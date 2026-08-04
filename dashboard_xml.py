@@ -112,21 +112,6 @@ class PortfolioDashboard:
     Intègre l'analyse cross-sectionnelle (snapshot) et l'analyse historique (VL).
     """
 
-    # -------------------------------------------------------------------------
-    # Chemins par défaut
-    # -------------------------------------------------------------------------
-    _DEFAULT_PATHS = {
-        "wb_input":       r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_EQUITY\2_TBB_EQUITY\Template\TBB_Gestion_Action.xlsx",
-        "returns":        r"data\returns.parquet",
-        "ciq":            r"data\screen_aggregate.parquet",
-        "news":           r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\MAJ_news_factset_daily\0_DATA\Base_news_facset_BRUTE.parquet",
-        "news_scored":    r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\MAJ_news_factset_daily\0_DATA\current_scored_news2.parquet",
-        "reco_facto":     r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_EQUITY\0_PTF_BLOOM\reco_secto_facto.xlsx",
-        "transco":        r"data\Transco_FactSet_ICB.xlsx",
-        "transco_ISIN_Fonds": r"data\Transco_ISIN_Fonds.xlsx",
-        "list_isin_etf":  r"data\RETURN_SAVE_ETF.xlsx"
-    }
-
     _DICT_FACTEURS = {
         'Value Avg Percentile':  "Score Value",
         'Growth Avg Percentile': "Score Growth",
@@ -192,9 +177,13 @@ class PortfolioDashboard:
         - type: 'excel_snap' ou 'parquet_ts'
         - path: chemin du fichier
         - fonds_name: filtre du nom de l'indice (si parquet_ts)
+
+        Les chemins externes sont fournis explicitement dans ``kwargs`` par le
+        notebook ou le script de production.
         """
         self.path_output = path_output
-        self.paths = {**self._DEFAULT_PATHS, **kwargs}
+        # Tous les chemins sont fournis par le point d'entrée appelant.
+        self.paths = dict(kwargs)
 
         # Attributs lazy (initialisés à None)
         self._df_returns   = None
@@ -614,12 +603,13 @@ class PortfolioDashboard:
         self.spot_date = available_dates[-1]
         self.last_date = available_dates[-2] if len(available_dates) > 1 else available_dates[-1]
 
+        reco_path = self.paths.get("reco_facto")
         try:
             self.df_reco_facto = pd.read_excel(
-                self.paths["reco_facto"], sheet_name="facto_eu", index_col=0
+                reco_path, sheet_name="facto_eu", index_col=0
             )
             self.df_reco_facto = self.df_reco_facto.rename(columns=self._DICT_FACTEURS)
-        except FileNotFoundError:
+        except (FileNotFoundError, TypeError, ValueError):
             self.df_reco_facto = None
             print("   ⚠️ Recommandations factorielles introuvables : utilisation du Score Multifacteur.")
 
@@ -2077,11 +2067,11 @@ class PortfolioDashboard:
         self.synthetic_fund_rows = int(len(expanded) - len(df))
         return expanded
 
-    @staticmethod
-    def _patch_add_nb_fonds_internes(df):
+    def _patch_add_nb_fonds_internes(self, df):
+        position_path = self.paths.get("position_pickle")
         try:
-            df_position = pd.read_pickle(r'\\groupe-ufg.com\commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_BASE\_BASE_PICKLE_HISTO\df_merged_position.pkl')
-        except FileNotFoundError:
+            df_position = pd.read_pickle(position_path)
+        except (FileNotFoundError, TypeError, ValueError):
             df['Nb de fonds maison détenant la pos'] = 0
             return df
 

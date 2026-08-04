@@ -30,33 +30,48 @@ def _path_from_env(name: str, default: Path) -> Path:
 if sys.platform.startswith("win"):
     path_position = _path_from_env("POSITION_DIR", PROJECT_DIR / "POSITION")
     path_output = _path_from_env("DASHBOARD_OUTPUT_DIR", path_position / "rapport")
+    path_data = _path_from_env("DASHBOARD_DATA_DIR", PROJECT_DIR / "data")
     path_template = _path_from_env(
         "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
     )
     path_returns = _path_from_env(
-        "DASHBOARD_RETURNS_PATH", PROJECT_DIR / "data" / "returns.parquet"
+        "DASHBOARD_RETURNS_PATH", path_data / "returns.parquet"
     )
     path_ciq = _path_from_env(
-        "DASHBOARD_CIQ_PATH", PROJECT_DIR / "data" / "screen_aggregate.parquet"
+        "DASHBOARD_CIQ_PATH", path_data / "screen_aggregate.parquet"
     )
     path_transco = _path_from_env(
-        "DASHBOARD_TRANSCO_PATH",
-        PROJECT_DIR / "data" / "Transco_FactSet_ICB.xlsx",
+        "DASHBOARD_TRANSCO_PATH", path_data / "Transco_FactSet_ICB.xlsx"
     )
     path_transco_isin_fonds = _path_from_env(
-        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
-        PROJECT_DIR / "data" / "Transco_ISIN_Fonds.xlsx",
+        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH", path_data / "Transco_ISIN_Fonds.xlsx"
     )
     path_etf = _path_from_env(
-        "DASHBOARD_ETF_PATH", PROJECT_DIR / "data" / "RETURN_SAVE_ETF.xlsx"
+        "DASHBOARD_ETF_PATH", path_data / "RETURN_SAVE_ETF.xlsx"
     )
     path_benchmark = _path_from_env(
-        "DASHBOARD_BENCHMARK_PATH",
-        PROJECT_DIR / "data" / "df_merged_position_HISTO.parquet",
+        "DASHBOARD_BENCHMARK_PATH", path_data / "df_merged_position_HISTO.parquet"
+    )
+    path_news = _path_from_env(
+        "DASHBOARD_NEWS_PATH",
+        Path(r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\MAJ_news_factset_daily\0_DATA\Base_news_facset_BRUTE.parquet"),
+    )
+    path_news_scored = _path_from_env(
+        "DASHBOARD_NEWS_SCORED_PATH",
+        Path(r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\MAJ_news_factset_daily\0_DATA\current_scored_news2.parquet"),
+    )
+    path_reco_facto = _path_from_env(
+        "DASHBOARD_RECO_FACTO_PATH",
+        Path(r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_EQUITY\0_PTF_BLOOM\reco_secto_facto.xlsx"),
+    )
+    path_position_pickle = _path_from_env(
+        "DASHBOARD_POSITION_PICKLE_PATH",
+        Path(r"\\groupe-ufg.com\Commun\Prive\GestionAM\Ingenierie_Financiere\PROD\_BASE\_BASE_PICKLE_HISTO\df_merged_position.pkl"),
     )
 else:
     path_position = _path_from_env("POSITION_DIR", Path("/POSITION"))
     path_output = _path_from_env("DASHBOARD_OUTPUT_DIR", path_position / "rapport")
+    path_data = _path_from_env("DASHBOARD_DATA_DIR", PROJECT_DIR / "data")
     path_template = _path_from_env(
         "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
     )
@@ -69,20 +84,42 @@ else:
         Path("/usr/share/inge-fi/PROD/_EQUITY/0_SCREEN_AGG/screen_aggregate.parquet"),
     )
     path_transco = _path_from_env(
-        "DASHBOARD_TRANSCO_PATH",
-        PROJECT_DIR / "data" / "Transco_FactSet_ICB.xlsx",
+        "DASHBOARD_TRANSCO_PATH", path_data / "Transco_FactSet_ICB.xlsx"
     )
     path_transco_isin_fonds = _path_from_env(
-        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
-        PROJECT_DIR / "data" / "Transco_ISIN_Fonds.xlsx",
+        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH", path_data / "Transco_ISIN_Fonds.xlsx"
     )
     path_etf = _path_from_env(
-        "DASHBOARD_ETF_PATH", PROJECT_DIR / "data" / "RETURN_SAVE_ETF.xlsx"
+        "DASHBOARD_ETF_PATH", path_data / "RETURN_SAVE_ETF.xlsx"
     )
     path_benchmark = _path_from_env(
         "DASHBOARD_BENCHMARK_PATH",
         Path("/usr/share/inge-fi/PROD/_BASE/df_merged_position.parquet"),
     )
+    path_news = _path_from_env(
+        "DASHBOARD_NEWS_PATH",
+        Path("/usr/share/inge-fi/PROD/MAJ_news_factset_daily/0_DATA/Base_news_facset_BRUTE.parquet"),
+    )
+    path_news_scored = _path_from_env(
+        "DASHBOARD_NEWS_SCORED_PATH",
+        Path("/usr/share/inge-fi/PROD/MAJ_news_factset_daily/0_DATA/current_scored_news2.parquet"),
+    )
+    path_reco_facto = _path_from_env(
+        "DASHBOARD_RECO_FACTO_PATH",
+        Path("/usr/share/inge-fi/PROD/_EQUITY/0_PTF_BLOOM/reco_secto_facto.xlsx"),
+    )
+    path_position_pickle = _path_from_env(
+        "DASHBOARD_POSITION_PICKLE_PATH",
+        Path("/usr/share/inge-fi/PROD/_BASE/_BASE_PICKLE_HISTO/df_merged_position.pkl"),
+    )
+
+# Emplacements des deux portefeuilles et des deux fichiers produits.
+path_ellebore = _path_from_env("ELLEBORE_POSITION_DIR", path_position / "Ellebore")
+path_pit = _path_from_env("PIT_POSITION_DIR", path_position / "PIT")
+path_report_ellebore = _path_from_env(
+    "ELLEBORE_OUTPUT_PATH", path_output / "Analyse_ellebore.xlsx"
+)
+path_report_pit = _path_from_env("PIT_OUTPUT_PATH", path_output / "Analyse_pit.xlsx")
 
 
 def _latest_excel(folder: Path) -> Path:
@@ -130,6 +167,10 @@ def _build_dashboard(
         transco=str(reference_paths["transco"]),
         transco_ISIN_Fonds=str(reference_paths["transco_isin_fonds"]),
         list_isin_etf=str(reference_paths["list_isin_etf"]),
+        news=str(reference_paths["news"]),
+        news_scored=str(reference_paths["news_scored"]),
+        reco_facto=str(reference_paths["reco_facto"]),
+        position_pickle=str(reference_paths["position_pickle"]),
     )
 
 
@@ -148,13 +189,17 @@ def main() -> int:
         "transco_isin_fonds": path_transco_isin_fonds,
         "list_isin_etf": path_etf,
         "benchmark": path_benchmark,
+        "news": path_news,
+        "news_scored": path_news_scored,
+        "reco_facto": path_reco_facto,
+        "position_pickle": path_position_pickle,
     }
 
     reports = [
         (
             "Ellebore",
             {"type": "parquet_ts", "path": str(reference_paths["benchmark"]), "fonds_name": "EUROSTOXX50"},
-            output_dir / "Analyse_ellebore.xlsx",
+            path_report_ellebore,
         ),
         (
             "PIT",
@@ -166,13 +211,13 @@ def main() -> int:
                     {"fonds_name": "CASH", "weight": 10},
                 ],
             },
-            output_dir / "Analyse_pit.xlsx",
+            path_report_pit,
         ),
     ]
 
     for name, bench_config, output_path in reports:
         try:
-            folder = path_position / name
+            folder = path_ellebore if name == "Ellebore" else path_pit
             messages.append(f"Début {name}.")
             fund_path = _latest_excel(folder)
             messages.append(f"Fichier {name} : {fund_path.name}.")
