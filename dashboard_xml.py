@@ -3427,7 +3427,8 @@ class PortfolioDashboard:
         self._clear_used(ws)
         # Écrit depuis A1 avec header
         self._write_df(ws, "A1", df, header=True, index=False)
-        ws.autofit()
+        # DATA peut contenir plusieurs dizaines de milliers de lignes :
+        # conserver les largeurs du modèle évite un parcours XML très coûteux.
 
     def _export_analyse(self, ws):
         if not hasattr(self, "fund_full"):
