@@ -53,7 +53,7 @@ def _build_dashboard(
     fund_path: Path,
     bench_config: dict,
     output_path: Path,
-    data_dir: Path,
+    reference_paths: dict[str, Path],
     template_path: Path,
 ) -> PortfolioDashboard:
     """Construit un dashboard XML avec les chemins locaux du serveur."""
@@ -62,11 +62,11 @@ def _build_dashboard(
         bench_config=bench_config,
         path_output=str(output_path),
         wb_input=str(template_path),
-        returns=str(data_dir / "returns.parquet"),
-        ciq=str(data_dir / "screen_aggregate.parquet"),
-        transco=str(data_dir / "Transco_FactSet_ICB.xlsx"),
-        transco_ISIN_Fonds=str(data_dir / "Transco_ISIN_Fonds.xlsx"),
-        list_isin_etf=str(data_dir / "RETURN_SAVE_ETF.xlsx"),
+        returns=str(reference_paths["returns"]),
+        ciq=str(reference_paths["ciq"]),
+        transco=str(reference_paths["transco"]),
+        transco_ISIN_Fonds=str(reference_paths["transco_isin_fonds"]),
+        list_isin_etf=str(reference_paths["list_isin_etf"]),
     )
 
 
@@ -80,23 +80,48 @@ def main() -> int:
     else:
         default_position = Path("/POSITION")
 
+    # Chaque répertoire ou fichier peut être remplacé indépendamment.
     position_dir = _path_from_env("POSITION_DIR", default_position)
     data_dir = _path_from_env("DASHBOARD_DATA_DIR", PROJECT_DIR / "data")
     output_dir = _path_from_env("DASHBOARD_OUTPUT_DIR", position_dir / "rapport")
-    template_path = _path_from_env("DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx")
+    template_path = _path_from_env(
+        "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
+    )
+    reference_paths = {
+        "returns": _path_from_env(
+            "DASHBOARD_RETURNS_PATH", data_dir / "returns.parquet"
+        ),
+        "ciq": _path_from_env(
+            "DASHBOARD_CIQ_PATH", data_dir / "screen_aggregate.parquet"
+        ),
+        "transco": _path_from_env(
+            "DASHBOARD_TRANSCO_PATH", data_dir / "Transco_FactSet_ICB.xlsx"
+        ),
+        "transco_isin_fonds": _path_from_env(
+            "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
+            data_dir / "Transco_ISIN_Fonds.xlsx",
+        ),
+        "list_isin_etf": _path_from_env(
+            "DASHBOARD_ETF_PATH", data_dir / "RETURN_SAVE_ETF.xlsx"
+        ),
+        "benchmark": _path_from_env(
+            "DASHBOARD_BENCHMARK_PATH",
+            data_dir / "df_merged_position_HISTO.parquet",
+        ),
+    }
     output_dir.mkdir(parents=True, exist_ok=True)
 
     reports = [
         (
             "Ellebore",
-            {"type": "parquet_ts", "path": str(data_dir / "df_merged_position_HISTO.parquet"), "fonds_name": "EUROSTOXX50"},
+            {"type": "parquet_ts", "path": str(reference_paths["benchmark"]), "fonds_name": "EUROSTOXX50"},
             output_dir / "Analyse_ellebore.xlsx",
         ),
         (
             "PIT",
             {
                 "type": "parquet_ts",
-                "path": str(data_dir / "df_merged_position_HISTO.parquet"),
+                "path": str(reference_paths["benchmark"]),
                 "components": [
                     {"fonds_name": "MSCI ACWI", "weight": 90},
                     {"fonds_name": "CASH", "weight": 10},
@@ -116,7 +141,7 @@ def main() -> int:
                 fund_path=fund_path,
                 bench_config=bench_config,
                 output_path=output_path,
-                data_dir=data_dir,
+                reference_paths=reference_paths,
                 template_path=template_path,
             )
             messages.append(f"Données {name} chargées.")
