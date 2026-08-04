@@ -95,7 +95,11 @@ def _build_dashboard(
 ) -> PortfolioDashboard:
     """Construit un dashboard XML avec les chemins locaux du serveur."""
     return PortfolioDashboard(
-        fund_config={"type": "excel_snap", "path": str(fund_path)},
+        fund_config={
+            "type": "excel_snap",
+            "path": str(fund_path),
+            "drift_weights": True,
+        },
         bench_config=bench_config,
         path_output=str(output_path),
         wb_input=str(template_path),

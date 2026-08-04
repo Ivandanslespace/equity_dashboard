@@ -177,6 +177,7 @@ class PortfolioDashboard:
         - type: 'excel_snap' ou 'parquet_ts'
         - path: chemin du fichier
         - fonds_name: filtre du nom de l'indice (si parquet_ts)
+        - drift_weights: dérive automatiquement les poids d'un snapshot vers la dernière date disponible
 
         Les chemins externes sont fournis explicitement dans ``kwargs`` par le
         notebook ou le script de production.
@@ -184,6 +185,7 @@ class PortfolioDashboard:
         self.path_output = path_output
         # Tous les chemins sont fournis par le point d'entrée appelant.
         self.paths = dict(kwargs)
+        self.drift_weights = bool(fund_config.get("drift_weights", False))
 
         # Attributs lazy (initialisés à None)
         self._df_returns   = None
@@ -216,6 +218,8 @@ class PortfolioDashboard:
 
         # Chargement la liste des ISINs ETFs
         self._parse_ETF_list()
+        if self.drift_weights:
+            self._apply_weight_drift()
 
         print("✅ PortfolioDashboard initialisé.")
         print(f"   → Output  : {os.path.basename(path_output)}")
@@ -544,6 +548,101 @@ class PortfolioDashboard:
             self.bench_start  = None
             self.attrib_start = None
             self.attrib_end   = None
+
+
+    def _apply_weight_drift(self):
+        """Projette les poids d'un snapshot avec les rendements observés."""
+        self.weight_drift_info = {
+            "enabled": True,
+            "start_date": self.analysis_as_of_date,
+            "end_date": self.analysis_as_of_date,
+            "missing_keys": [],
+            "partial_keys": [],
+        }
+
+        if self.fund_ts is not None or self.fund is None or self.fund.empty:
+            return
+
+        start_value = self.analysis_as_of_date
+        if start_value is None and "Date" in self.fund.columns:
+            start_value = pd.to_datetime(self.fund["Date"], errors="coerce").max()
+        if start_value is None or pd.isna(start_value):
+            return
+        start = pd.Timestamp(start_value).normalize()
+        self.weight_drift_info["start_date"] = start
+        returns = self.df_returns.copy()
+        returns.index = pd.to_datetime(returns.index, errors="coerce")
+        returns = returns.loc[returns.index.notna()].sort_index()
+        if returns.empty:
+            return
+
+        end_candidates = [pd.Timestamp(returns.index.max()).normalize()]
+        if self.bench_ts is not None and "Date" in self.bench_ts.columns:
+            bench_dates = pd.to_datetime(self.bench_ts["Date"], errors="coerce").dropna()
+            if not bench_dates.empty:
+                end_candidates.append(bench_dates.max().normalize())
+        target = min(end_candidates)
+        self.weight_drift_info["end_date"] = target
+        if target <= start:
+            return
+
+        window = returns.loc[(returns.index > start) & (returns.index <= target)]
+        if window.empty:
+            return
+
+        sedol_map = self._build_isin_sedol_map()
+        etf_isins = set(
+            pd.Series(self.list_isin_etf).dropna().astype(str).str.strip()
+        )
+        frame = self.fund.copy()
+        isins = frame["ISIN"].astype(str).str.strip().str.split().str[0]
+        keys = isins.map(sedol_map)
+        keys = keys.where(~isins.isin(etf_isins), isins)
+        keys = keys.where(isins.str.upper() != "CASH", "CASH")
+        keys = keys.where(keys.isin(window.columns), isins.where(isins.isin(window.columns)))
+
+        growth = {}
+        missing_keys = []
+        partial_keys = []
+        for key in pd.Index(keys.dropna().unique()):
+            if key not in window.columns:
+                missing_keys.append(str(key))
+                continue
+            observed = window[key].dropna()
+            if observed.empty:
+                missing_keys.append(str(key))
+                continue
+            growth[key] = float((1.0 + observed).prod())
+            if len(observed) < len(window):
+                partial_keys.append(str(key))
+
+        frame["_DRIFT_GROWTH"] = keys.map(growth).fillna(1.0)
+        frame["%ACTIF"] = pd.to_numeric(frame["%ACTIF"], errors="coerce") * frame["_DRIFT_GROWTH"]
+        frame.drop(columns=["_DRIFT_GROWTH"], inplace=True)
+        if "Date" in frame.columns:
+            frame["Date"] = target
+        self.fund = frame
+        self.analysis_as_of_date = target
+        self.weight_drift_info["missing_keys"] = missing_keys
+        self.weight_drift_info["partial_keys"] = partial_keys
+
+        if self.bench_ts is not None and "Date" in self.bench_ts.columns:
+            bench_dates = pd.to_datetime(self.bench_ts["Date"], errors="coerce")
+            eligible = bench_dates[bench_dates <= target]
+            if not eligible.empty:
+                chosen = eligible.max()
+                self.bench_df = self.bench_ts.loc[bench_dates == chosen].copy()
+
+        print(
+            "   → Drift des poids : "
+            f"{start.strftime('%Y-%m-%d')} → {target.strftime('%Y-%m-%d')}"
+        )
+        if missing_keys or partial_keys:
+            print(
+                "   ⚠️ Rendements incomplets pour le drift : "
+                f"{len(missing_keys)} clé(s) absente(s), "
+                f"{len(partial_keys)} clé(s) partielles."
+            )
 
 
     def _load_core_data(self):
