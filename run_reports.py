@@ -8,6 +8,12 @@ from pathlib import Path
 
 if sys.platform.startswith("linux"):
     os.environ.setdefault("MPLBACKEND", "Agg")
+    try:
+        from notification import sendNotification
+    except ImportError:
+        sendNotification = None
+else:
+    sendNotification = None
 
 from dashboard_xml import PortfolioDashboard
 
@@ -18,6 +24,65 @@ PROJECT_DIR = Path(__file__).resolve().parent
 def _path_from_env(name: str, default: Path) -> Path:
     """Retourne un chemin configuré par variable d'environnement ou sa valeur par défaut."""
     return Path(os.getenv(name, str(default))).expanduser()
+
+
+# Configuration des chemins : chaque fichier peut résider dans son propre dossier.
+if sys.platform.startswith("win"):
+    path_position = _path_from_env("POSITION_DIR", PROJECT_DIR / "POSITION")
+    path_output = _path_from_env("DASHBOARD_OUTPUT_DIR", path_position / "rapport")
+    path_template = _path_from_env(
+        "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
+    )
+    path_returns = _path_from_env(
+        "DASHBOARD_RETURNS_PATH", PROJECT_DIR / "data" / "returns.parquet"
+    )
+    path_ciq = _path_from_env(
+        "DASHBOARD_CIQ_PATH", PROJECT_DIR / "data" / "screen_aggregate.parquet"
+    )
+    path_transco = _path_from_env(
+        "DASHBOARD_TRANSCO_PATH",
+        PROJECT_DIR / "data" / "Transco_FactSet_ICB.xlsx",
+    )
+    path_transco_isin_fonds = _path_from_env(
+        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
+        PROJECT_DIR / "data" / "Transco_ISIN_Fonds.xlsx",
+    )
+    path_etf = _path_from_env(
+        "DASHBOARD_ETF_PATH", PROJECT_DIR / "data" / "RETURN_SAVE_ETF.xlsx"
+    )
+    path_benchmark = _path_from_env(
+        "DASHBOARD_BENCHMARK_PATH",
+        PROJECT_DIR / "data" / "df_merged_position_HISTO.parquet",
+    )
+else:
+    path_position = _path_from_env("POSITION_DIR", Path("/POSITION"))
+    path_output = _path_from_env("DASHBOARD_OUTPUT_DIR", path_position / "rapport")
+    path_template = _path_from_env(
+        "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
+    )
+    path_returns = _path_from_env(
+        "DASHBOARD_RETURNS_PATH",
+        Path("/usr/share/inge-fi/PROD/_EQUITY/0_RETURNS/returns.parquet"),
+    )
+    path_ciq = _path_from_env(
+        "DASHBOARD_CIQ_PATH",
+        Path("/usr/share/inge-fi/PROD/_EQUITY/0_SCREEN_AGG/screen_aggregate.parquet"),
+    )
+    path_transco = _path_from_env(
+        "DASHBOARD_TRANSCO_PATH",
+        PROJECT_DIR / "data" / "Transco_FactSet_ICB.xlsx",
+    )
+    path_transco_isin_fonds = _path_from_env(
+        "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
+        PROJECT_DIR / "data" / "Transco_ISIN_Fonds.xlsx",
+    )
+    path_etf = _path_from_env(
+        "DASHBOARD_ETF_PATH", PROJECT_DIR / "data" / "RETURN_SAVE_ETF.xlsx"
+    )
+    path_benchmark = _path_from_env(
+        "DASHBOARD_BENCHMARK_PATH",
+        Path("/usr/share/inge-fi/PROD/_BASE/df_merged_position.parquet"),
+    )
 
 
 def _latest_excel(folder: Path) -> Path:
@@ -36,9 +101,7 @@ def _latest_excel(folder: Path) -> Path:
 
 def _send_linux_notification(subject: str, body: str, messages: list[str]) -> None:
     """Envoie une notification si la fonction est disponible dans l'environnement Azure."""
-    try:
-        from notification import sendNotification
-    except ImportError:
+    if sendNotification is None:
         messages.append("Notification non envoyée : module notification introuvable.")
         return
 
@@ -75,41 +138,17 @@ def main() -> int:
     messages: list[str] = []
     errors: list[str] = []
 
-    if sys.platform.startswith("win"):
-        default_position = PROJECT_DIR / "POSITION"
-    else:
-        default_position = Path("/POSITION")
-
     # Chaque répertoire ou fichier peut être remplacé indépendamment.
-    position_dir = _path_from_env("POSITION_DIR", default_position)
-    data_dir = _path_from_env("DASHBOARD_DATA_DIR", PROJECT_DIR / "data")
-    output_dir = _path_from_env("DASHBOARD_OUTPUT_DIR", position_dir / "rapport")
-    template_path = _path_from_env(
-        "DASHBOARD_TEMPLATE", PROJECT_DIR / "Analyse_MASK.xlsx"
-    )
-    reference_paths = {
-        "returns": _path_from_env(
-            "DASHBOARD_RETURNS_PATH", data_dir / "returns.parquet"
-        ),
-        "ciq": _path_from_env(
-            "DASHBOARD_CIQ_PATH", data_dir / "screen_aggregate.parquet"
-        ),
-        "transco": _path_from_env(
-            "DASHBOARD_TRANSCO_PATH", data_dir / "Transco_FactSet_ICB.xlsx"
-        ),
-        "transco_isin_fonds": _path_from_env(
-            "DASHBOARD_TRANSCO_ISIN_FONDS_PATH",
-            data_dir / "Transco_ISIN_Fonds.xlsx",
-        ),
-        "list_isin_etf": _path_from_env(
-            "DASHBOARD_ETF_PATH", data_dir / "RETURN_SAVE_ETF.xlsx"
-        ),
-        "benchmark": _path_from_env(
-            "DASHBOARD_BENCHMARK_PATH",
-            data_dir / "df_merged_position_HISTO.parquet",
-        ),
-    }
+    output_dir = path_output
     output_dir.mkdir(parents=True, exist_ok=True)
+    reference_paths = {
+        "returns": path_returns,
+        "ciq": path_ciq,
+        "transco": path_transco,
+        "transco_isin_fonds": path_transco_isin_fonds,
+        "list_isin_etf": path_etf,
+        "benchmark": path_benchmark,
+    }
 
     reports = [
         (
@@ -133,7 +172,7 @@ def main() -> int:
 
     for name, bench_config, output_path in reports:
         try:
-            folder = position_dir / name
+            folder = path_position / name
             messages.append(f"Début {name}.")
             fund_path = _latest_excel(folder)
             messages.append(f"Fichier {name} : {fund_path.name}.")
@@ -142,7 +181,7 @@ def main() -> int:
                 bench_config=bench_config,
                 output_path=output_path,
                 reference_paths=reference_paths,
-                template_path=template_path,
+                template_path=path_template,
             )
             messages.append(f"Données {name} chargées.")
             dashboard.export_to_excel()
