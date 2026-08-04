@@ -101,8 +101,13 @@ def test_analyse_compte_uniquement_les_titres_non_vides():
             for adresse in ("C6", "D6")
         }
 
-    assert all('SUMPRODUCT(--(' in formule and '<>""' in formule for formule in formules.values())
-    assert 'INDIRECT($D$3&"!$A$2:$A$3000")' in formules["D6"]
+    assert all(
+        'SUMPRODUCT((' in formule
+        and '/COUNTIF(' in formule
+        and '<>""' in formule
+        for formule in formules.values()
+    )
+    assert 'INDIRECT($D$3&"!$A$2:$A$5000")' in formules["D6"]
     assert not any("COUNTA(" in formule for formule in formules.values())
 
 
