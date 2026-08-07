@@ -99,6 +99,7 @@ def _build_dashboard(
             "type": "excel_snap",
             "path": str(fund_path),
             "drift_weights": True,
+            "bhb_months": 1,
         },
         bench_config=bench_config,
         path_output=str(output_path),

@@ -173,6 +173,7 @@ class PortfolioDashboard:
         - sheet: nom de l'onglet (si excel)
         - fonds_name: filtre du nom de fonds (si parquet_ts)
         - region / sector: filtres optionnels de région et de secteur
+        - bhb_months: fenêtre BHB en mois (défaut : 1)
        
         bench_config attendu :
         - type: 'excel_snap' ou 'parquet_ts'
@@ -188,6 +189,9 @@ class PortfolioDashboard:
         # Tous les chemins sont fournis par le point d'entrée appelant.
         self.paths = dict(kwargs)
         self.drift_weights = bool(fund_config.get("drift_weights", False))
+        self.bhb_months = int(fund_config.get("bhb_months", 1))
+        if self.bhb_months < 1:
+            raise ValueError("bhb_months doit être un entier positif.")
 
         # Attributs lazy (initialisés à None)
         self._df_returns   = None
@@ -515,11 +519,11 @@ class PortfolioDashboard:
             if "LIBELLE" not in self.bench_df.columns: self.bench_df["LIBELLE"] = "N/A"
 
             # --- Snapshot de début de période pour l'attribution BHB ---
-            # On prend la date commune la plus proche d'il y a 1 mois
-            target_start = latest_date - pd.DateOffset(months=1)
+            # On prend la date commune la plus proche de la fenêtre demandée.
+            target_start = latest_date - pd.DateOffset(months=self.bhb_months)
             common_dt    = pd.to_datetime(common_dates)
             start_date   = common_dt[common_dt <= target_start].max() if (common_dt <= target_start).any() else common_dt[0]
-            print(f"   → Date de début BHB (≈ 1M) : {start_date.strftime('%Y-%m-%d')}")
+            print(f"   → Date de début BHB (≈ {self.bhb_months}M) : {start_date.strftime('%Y-%m-%d')}")
 
             self.fund_start   = self.fund_ts[self.fund_ts["Date"] == start_date].copy()
             self.bench_start  = self.bench_ts[self.bench_ts["Date"] == start_date].copy()
@@ -2613,7 +2617,7 @@ class PortfolioDashboard:
 
         Paramètres
         ----------
-        start_date : date-like ou None — début de la fenêtre (défaut : ≈ 1M en arrière)
+        start_date : date-like ou None — début de la fenêtre (défaut : selon ``bhb_months``)
         end_date   : date-like ou None — fin   de la fenêtre (défaut : dernier snapshot)
 
         Attributs stockés
