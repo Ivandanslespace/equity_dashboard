@@ -76,6 +76,7 @@
 
 
 import pandas as pd
+import pyarrow.parquet as pq
 import copy
 import numpy as np
 import os
@@ -176,9 +177,9 @@ class PortfolioDashboard:
         - bhb_months: fenêtre BHB en mois (défaut : 1)
        
         bench_config attendu :
-        - type: 'excel_snap' ou 'parquet_ts'
+        - type: 'excel_snap', 'parquet_ts' ou 'screen_ts'
         - path: chemin du fichier
-        - fonds_name: filtre du nom de l'indice (si parquet_ts)
+        - fonds_name: nom de l'indice (si parquet_ts ou screen_ts)
         - region / sector: filtres optionnels de région et de secteur
         - drift_weights: dérive automatiquement les poids d'un snapshot vers la dernière date disponible
 
@@ -277,6 +278,33 @@ class PortfolioDashboard:
         df["ISIN"] = df["ISIN"].astype(str).str.strip().str.split().str[0]
         df["%ACTIF"] = pd.to_numeric(df["%ACTIF"], errors="coerce").fillna(0.0)
         return df
+
+    def _load_screen_bench_ts(self, path: str, fonds_name: str) -> pd.DataFrame:
+        """Construit une série Benchmark depuis une colonne ``Weight in ...`` du screen."""
+        fonds_name = str(fonds_name).strip()
+        schema = pq.read_schema(path).names
+        weight_col = next(
+            (column for column in schema
+             if str(column).strip().casefold() == f"Weight in {fonds_name}".casefold()),
+            None,
+        )
+        if weight_col is None:
+            raise ValueError(f"Colonne absente du screen : Weight in {fonds_name}")
+
+        df = pd.read_parquet(path, columns=["Date", "Name", weight_col]).reset_index()
+        if "ISIN" not in df.columns:
+            raise ValueError("Le screen doit utiliser ISIN comme index ou colonne.")
+        df = df.rename(columns={"Name": "LIBELLE", weight_col: "%ACTIF"})
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df["%ACTIF"] = pd.to_numeric(df["%ACTIF"], errors="coerce")
+        df = df.dropna(subset=["Date", "ISIN", "%ACTIF"])
+        df["ISIN"] = df["ISIN"].astype(str).str.strip().str.split().str[0]
+        df = df.drop_duplicates(["Date", "ISIN"], keep="first")
+        totals = df.groupby("Date")["%ACTIF"].transform("sum")
+        df = df.loc[totals > 0].copy()
+        df["%ACTIF"] = df["%ACTIF"] / totals.loc[df.index]
+        df["LIBELLE"] = df["LIBELLE"].fillna("N/A")
+        return df[["Date", "ISIN", "LIBELLE", "%ACTIF"]]
 
     def _build_cash_component(self, dates, weight: float) -> pd.DataFrame:
         dates = pd.to_datetime(pd.Series(dates).dropna().unique())
@@ -470,6 +498,14 @@ class PortfolioDashboard:
                 "MAIN_SECURITY_CODE": "ISIN", "Weight": "%ACTIF", "Name": "LIBELLE"
             })
             self.bench_name = "Benchmark"
+
+        elif c_type == "screen_ts":
+            fonds_name = config.get("fonds_name")
+            if not fonds_name:
+                raise ValueError("screen_ts nécessite fonds_name, par exemple 'MSCI WORLD'.")
+            self.bench_ts = self._load_screen_bench_ts(path, fonds_name)
+            self.bench_name = str(fonds_name).strip()
+            self.bench_has_cash = False
 
         elif c_type == "parquet_ts":
             components = config.get("components")
