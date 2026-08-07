@@ -389,13 +389,48 @@ class PortfolioDashboard:
                 self.fund_name = Path(path).stem
 
         elif c_type == "excel_ts":
-            # Cas 2 : Excel séries temporelles (format analyse_histo)
+            # Cas 2 : Excel séries temporelles ; l'ordre des colonnes est libre.
             sheet = config.get("sheet")
-            df = pd.read_excel(path, sheet_name=sheet, header=0, usecols="A:D")
-            df.columns = ["Date", "ISIN", "%ACTIF", "Valorisation"]
-            df["Date"] = pd.to_datetime(df["Date"])
+            df = pd.read_excel(path, sheet_name=0 if sheet is None else sheet, header=0)
+            df.columns = [str(col).strip() for col in df.columns]
+
+            def _find_column(candidates):
+                for candidate in candidates:
+                    for column in df.columns:
+                        if column.casefold() == candidate.casefold():
+                            return column
+                return None
+
+            date_col = _find_column(["Date", "datePos"])
+            isin_col = _find_column(["ISIN", "ident", "MAIN_SECURITY_CODE"])
+            weight_col = _find_column(["%ACTIF", "Weight", "Poids"])
+            value_col = _find_column(["Valorisation", "Valuation"])
+            missing = [
+                label for label, column in {
+                    "Date": date_col,
+                    "ISIN": isin_col,
+                    "%ACTIF / Weight": weight_col,
+                }.items() if column is None
+            ]
+            if missing:
+                raise ValueError(
+                    "Colonnes obligatoires absentes du fichier Excel TS : "
+                    + ", ".join(missing)
+                )
+
+            rename = {date_col: "Date", isin_col: "ISIN", weight_col: "%ACTIF"}
+            if value_col is not None:
+                rename[value_col] = "Valorisation"
+            df = df.rename(columns=rename)[["Date", "ISIN", "%ACTIF"] + (
+                ["Valorisation"] if value_col is not None else []
+            )]
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df["%ACTIF"] = pd.to_numeric(df["%ACTIF"], errors="coerce")
+            if value_col is None:
+                # Sans VL, le poids sert de valeur de substitution pour les modules historiques.
+                df["Valorisation"] = df["%ACTIF"]
             self.fund_ts = df
-            self.fund_name = sheet
+            self.fund_name = str(sheet) if sheet is not None else Path(path).stem
 
         elif c_type == "parquet_ts":
             # Cas 3 : Parquet séries temporelles
