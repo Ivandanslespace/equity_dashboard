@@ -291,9 +291,20 @@ class PortfolioDashboard:
         if weight_col is None:
             raise ValueError(f"Colonne absente du screen : Weight in {fonds_name}")
 
-        df = pd.read_parquet(path, columns=["Date", "Name", weight_col]).reset_index()
+        isin_col = next(
+            (column for column in schema if str(column).strip().casefold() == "isin"),
+            None,
+        )
+        columns = ["Date", "Name", weight_col]
+        if isin_col is not None:
+            columns.append(isin_col)
+        df = pd.read_parquet(path, columns=columns)
+        if isin_col is not None and isin_col != "ISIN" and isin_col in df.columns:
+            df = df.rename(columns={isin_col: "ISIN"})
         if "ISIN" not in df.columns:
-            raise ValueError("Le screen doit utiliser ISIN comme index ou colonne.")
+            df = df.reset_index()
+        if "ISIN" not in df.columns:
+            raise ValueError("Le screen doit contenir ISIN comme index ou colonne.")
         df = df.rename(columns={"Name": "LIBELLE", weight_col: "%ACTIF"})
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         df["%ACTIF"] = pd.to_numeric(df["%ACTIF"], errors="coerce")

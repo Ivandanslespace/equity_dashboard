@@ -38,3 +38,23 @@ def test_screen_ts_signale_une_colonne_de_poids_absente(tmp_path):
     dashboard = PortfolioDashboard.__new__(PortfolioDashboard)
     with pytest.raises(ValueError, match="Weight in MSCI WORLD"):
         dashboard._load_screen_bench_ts(path, "MSCI WORLD")
+
+
+def test_screen_ts_charge_un_isin_stocke_comme_colonne(tmp_path):
+    """Le format Parquet avec ISIN comme colonne est également accepté."""
+    path = tmp_path / "screen_colonne.parquet"
+    source = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2025-01-31", "2025-01-31"]),
+            "ISIN": ["AAA", "BBB"],
+            "Name": ["A", "B"],
+            "Weight in MSCI WORLD": [0.25, 0.75],
+        }
+    )
+    source.to_parquet(path, index=False)
+
+    dashboard = PortfolioDashboard.__new__(PortfolioDashboard)
+    result = dashboard._load_screen_bench_ts(path, "MSCI WORLD")
+
+    assert result["ISIN"].tolist() == ["AAA", "BBB"]
+    assert result["%ACTIF"].sum() == 1.0
