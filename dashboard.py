@@ -172,11 +172,13 @@ class PortfolioDashboard:
         - path: chemin du fichier
         - sheet: nom de l'onglet (si excel)
         - fonds_name: filtre du nom de fonds (si parquet_ts)
+        - region / sector: filtres optionnels de région et de secteur
        
         bench_config attendu :
         - type: 'excel_snap' ou 'parquet_ts'
         - path: chemin du fichier
         - fonds_name: filtre du nom de l'indice (si parquet_ts)
+        - region / sector: filtres optionnels de région et de secteur
         - drift_weights: dérive automatiquement les poids d'un snapshot vers la dernière date disponible
 
         Les chemins externes sont fournis explicitement dans ``kwargs`` par le
@@ -215,6 +217,9 @@ class PortfolioDashboard:
 
         # Chargement immédiat des données légères externes (Screen, CIQ, etc.)
         self._load_core_data()
+
+        if self._apply_position_filters(fund_config, bench_config):
+            self._align_snapshots()
 
         # Chargement la liste des ISINs ETFs
         self._parse_ETF_list()
@@ -583,6 +588,93 @@ class PortfolioDashboard:
             self.bench_start  = None
             self.attrib_start = None
             self.attrib_end   = None
+
+
+    def _apply_position_filters(self, fund_config: dict, bench_config: dict) -> bool:
+        """Filtre les positions par région/secteur puis renormalise les poids."""
+        def _value(config, key):
+            value = config.get(key)
+            return None if value is None or str(value).strip() == "" else value
+
+        requested = {
+            "PTF": {"region": _value(fund_config, "region"), "sector": _value(fund_config, "sector")},
+            "Benchmark": {"region": _value(bench_config, "region"), "sector": _value(bench_config, "sector")},
+        }
+        if not any(value is not None for filters in requested.values() for value in filters.values()):
+            return False
+
+        screen = getattr(self, "last_screen", pd.DataFrame()).copy()
+        if "ISIN" not in screen.columns:
+            raise ValueError("Le filtre région/secteur nécessite une colonne ISIN dans le screen.")
+        screen["ISIN"] = screen["ISIN"].astype(str).str.strip().str.split().str[0]
+        screen = screen.drop_duplicates("ISIN").set_index("ISIN")
+
+        # Complète le screen avec la table de transcodage des fonds internes si disponible.
+        transco_path = self.paths.get("transco_ISIN_Fonds")
+        if transco_path and os.path.exists(transco_path):
+            transco = pd.read_excel(transco_path)
+            isin_col = next((c for c in transco.columns if str(c).strip().casefold() in {"isin", "isIn".casefold()}), None)
+            if isin_col is not None:
+                transco[isin_col] = transco[isin_col].astype(str).str.strip().str.split().str[0]
+                transco = transco.drop_duplicates(isin_col).set_index(isin_col)
+                for column in ["Exchange Country Region", "ICB19 Supersector"]:
+                    if column in transco.columns:
+                        if column not in screen.columns:
+                            screen[column] = pd.NA
+                        screen[column] = screen[column].fillna(transco[column])
+
+        aliases = {
+            "region": ["Exchange Country Region", "Region", "region"],
+            "sector": ["ICB19 Supersector", "Benchmark ICB Supersector", "Sector", "sector"],
+        }
+
+        def _normalise(value, is_region=False):
+            value = str(value).strip()
+            if is_region:
+                value = self._REGION_ALIASES.get(value, value)
+            return value.casefold()
+
+        def _filter_frame(frame, filters, label):
+            if frame is None:
+                return None
+            frame = frame.copy()
+            frame["_FILTER_ISIN"] = frame["ISIN"].astype(str).str.strip().str.split().str[0]
+            mask = pd.Series(True, index=frame.index)
+            for key, wanted in filters.items():
+                if wanted is None:
+                    continue
+                source = next((column for column in aliases[key] if column in frame.columns), None)
+                if source is None:
+                    values = frame["_FILTER_ISIN"].map(screen.get(aliases[key][0], pd.Series(dtype=object)))
+                else:
+                    values = frame[source]
+                    values = values.where(values.notna(), frame["_FILTER_ISIN"].map(screen.get(aliases[key][0], pd.Series(dtype=object))))
+                wanted_norm = _normalise(wanted, key == "region")
+                mask &= values.map(lambda value: _normalise(value, key == "region") if pd.notna(value) else "") == wanted_norm
+
+            filtered = frame.loc[mask].drop(columns=["_FILTER_ISIN"])
+            if filtered.empty:
+                raise ValueError(f"Aucune position {label} ne correspond aux filtres région/secteur.")
+            weight_col = next((column for column in ["%ACTIF", "Weight", "Poids"] if column in filtered.columns), None)
+            if weight_col is None:
+                raise ValueError(f"La source {label} ne contient aucune colonne de poids.")
+            if weight_col != "%ACTIF":
+                filtered = filtered.rename(columns={weight_col: "%ACTIF"})
+            filtered["%ACTIF"] = pd.to_numeric(filtered["%ACTIF"], errors="coerce").fillna(0.0)
+            if "Date" in filtered.columns:
+                totals = filtered.groupby("Date")["%ACTIF"].transform("sum")
+            else:
+                totals = pd.Series(filtered["%ACTIF"].sum(), index=filtered.index)
+            if (totals == 0).any():
+                raise ValueError(f"Les poids filtrés de {label} sont nuls.")
+            filtered["%ACTIF"] = filtered["%ACTIF"] / totals
+            return filtered
+
+        self.fund_ts = _filter_frame(self.fund_ts, requested["PTF"], "du PTF") if requested["PTF"]["region"] is not None or requested["PTF"]["sector"] is not None else self.fund_ts
+        self.fund = _filter_frame(self.fund, requested["PTF"], "du PTF") if self.fund_ts is None and (requested["PTF"]["region"] is not None or requested["PTF"]["sector"] is not None) else self.fund
+        self.bench_ts = _filter_frame(self.bench_ts, requested["Benchmark"], "du benchmark") if requested["Benchmark"]["region"] is not None or requested["Benchmark"]["sector"] is not None else self.bench_ts
+        self.bench_df = _filter_frame(self.bench_df, requested["Benchmark"], "du benchmark") if self.bench_ts is None and (requested["Benchmark"]["region"] is not None or requested["Benchmark"]["sector"] is not None) else self.bench_df
+        return True
 
 
     def _apply_weight_drift(self):
